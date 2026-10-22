@@ -90,3 +90,12 @@ test('validateFindingsFile', () => {
   assert.ok(validateFindingsFile({ ...doc, generated_at: 'yesterday' }).some((e) => e.includes('generated_at')));
   assert.ok(validateFindingsFile({ ...doc, findings: [{ ...good(), severity: 'x' }] }).some((e) => e.includes('findings[0]')));
 });
+
+test('kebab-case words are not mistaken for keys; real keys still are', () => {
+  for (const s of ['src/components/task-list-item-renderer.tsx', 'high-risk-user-data-exposure', 'mask-akia-aiza-sk_live_x']) {
+    assert.deepEqual(findUnmaskedSecrets(s), [], s);
+  }
+  assert.deepEqual(errs({ subject: 'src/components/task-list-item-renderer.tsx' }), []);
+  assert.ok(findUnmaskedSecrets('key: sk-proj-' + 'a1B2'.repeat(6)).includes('openai-key'));
+  assert.ok(findUnmaskedSecrets('(sk-' + 'a1B2'.repeat(6) + ')').includes('openai-key'));
+});

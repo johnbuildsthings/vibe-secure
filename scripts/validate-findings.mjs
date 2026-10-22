@@ -21,13 +21,13 @@ function isServiceRoleJwt(match) {
 
 // `test`, when present, must also pass for a regex match to count.
 export const SECRET_PATTERNS = [
-  { name: 'stripe-key', regex: /sk_(?:live|test)_[A-Za-z0-9]{16,}/g },
-  { name: 'stripe-restricted-key', regex: /rk_live_[A-Za-z0-9]{16,}/g },
-  { name: 'anthropic-key', regex: /sk-ant-[A-Za-z0-9_-]{20,}/g },
-  { name: 'openai-key', regex: /sk-(?:proj-)?[A-Za-z0-9_-]{20,}/g },
-  { name: 'google-api-key', regex: /AIza[0-9A-Za-z_-]{35}/g },
-  { name: 'aws-access-key', regex: /AKIA[0-9A-Z]{16}/g },
-  { name: 'supabase-service-role-jwt', regex: /eyJ[\w-]+\.[\w-]+\.[\w-]+/g, test: isServiceRoleJwt },
+  { name: 'stripe-key', regex: /(?<![A-Za-z0-9_-])sk_(?:live|test)_[A-Za-z0-9]{16,}/g },
+  { name: 'stripe-restricted-key', regex: /(?<![A-Za-z0-9_-])rk_live_[A-Za-z0-9]{16,}/g },
+  { name: 'anthropic-key', regex: /(?<![A-Za-z0-9_-])sk-ant-[A-Za-z0-9_-]{20,}/g },
+  { name: 'openai-key', regex: /(?<![A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{20,}/g },
+  { name: 'google-api-key', regex: /(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{35}/g },
+  { name: 'aws-access-key', regex: /(?<![A-Za-z0-9_-])AKIA[0-9A-Z]{16}/g },
+  { name: 'supabase-service-role-jwt', regex: /(?<![A-Za-z0-9_-])eyJ[\w-]+\.[\w-]+\.[\w-]+/g, test: isServiceRoleJwt },
 ];
 
 // Returns the names of secret patterns found unmasked in `text`.
