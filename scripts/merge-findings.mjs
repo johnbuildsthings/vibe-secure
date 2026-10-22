@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isMain } from './is-main.mjs';
 import { severityRank, validateFindingsFile } from './validate-findings.mjs';
 
 const COUNTED = ['critical', 'high', 'medium', 'low'];
@@ -86,6 +86,6 @@ function main(args) {
   return 0;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMain(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

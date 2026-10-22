@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isMain } from './is-main.mjs';
 
 const SKIP_DIRS = new Set(['node_modules', '.next', 'dist', 'build', 'out', '.git', '.vercel', '.netlify', '.vibe-secure', 'coverage']);
 const MANIFESTS = ['package.json', 'pyproject.toml', 'requirements.txt'];
@@ -87,6 +87,6 @@ function main(args) {
   return 0;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMain(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

@@ -3,7 +3,7 @@
 // Exit 0 on pass, 1 on fail.
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isMain } from '../scripts/is-main.mjs';
 import { validateFindingsFile, severityRank, SEVERITIES } from '../scripts/validate-findings.mjs';
 
 const GATING = severityRank('high');
@@ -176,6 +176,6 @@ function main(argv) {
   return r.pass ? 0 : 1;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMain(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

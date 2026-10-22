@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { isMain } from './is-main.mjs';
 
 export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'unverified'];
 const STATUSES = ['open', 'fixed', 'skipped', 'awaiting-user'];
@@ -144,6 +144,6 @@ function main(files) {
   return bad ? 1 : 0;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMain(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

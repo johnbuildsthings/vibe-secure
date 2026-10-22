@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isMain } from './is-main.mjs';
 import { maskText } from './mask.mjs';
 
 const MAX_REQUESTS = 50;
@@ -184,7 +184,7 @@ function parseArgs(argv) {
   return args;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMain(import.meta.url)) {
   const { root, method, headers, url } = parseArgs(process.argv.slice(2));
   if (!root || !url) {
     console.error('usage: safe-fetch.mjs --root <dir> [--method HEAD] [--header "Name: value"]... <url>');
