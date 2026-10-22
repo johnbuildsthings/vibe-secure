@@ -1,0 +1,7 @@
+{
+  "name": "vibe-secure",
+  "version": "0.1.0",
+  "description": "OWASP-based security-audit skills for vibe coders: plain-English findings, safe fixes, and optional live checks.",
+  "author": { "name": "John Andersen" },
+  "license": "MIT"
+}

@@ -1,2 +1,4 @@
 .vibe-secure/
 .DS_Store
+evals/results/
+node_modules/
