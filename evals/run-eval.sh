@@ -23,6 +23,9 @@ FIXTURE="$REPO/test-fixtures/$FIXTURE_NAME"
 [ -d "$FIXTURE" ] && [ -f "$FIXTURE/expected-findings.json" ] || { echo "no such fixture: $FIXTURE_NAME" >&2; exit 2; }
 if [ "$AREA" = live ] && [ "$LIVE" -eq 0 ]; then echo "area 'live' needs --live" >&2; exit 2; fi
 if [ "$FIX" -eq 1 ] && [ "$AREA" != all ]; then echo "--fix runs the whole security-check; use area 'all'" >&2; exit 2; fi
+if [ "$FIX" -eq 1 ] && [ "$LIVE" -eq 1 ]; then echo "--fix and --live cannot be combined" >&2; exit 2; fi
+if [ "$LIVE" -eq 1 ] && [ "$AREA" != live ] && [ "$AREA" != all ]; then echo "--live only works with area 'live' or 'all'" >&2; exit 2; fi
+if [ "$FIX" -eq 1 ] && [ ! -f "$FIXTURE/smoke.mjs" ]; then echo "fixture $FIXTURE_NAME has no smoke.mjs, which --fix needs" >&2; exit 2; fi
 if [ "$LIVE" -eq 1 ] && [ ! -f "$FIXTURE/expected-live.json" ]; then echo "fixture $FIXTURE_NAME has no expected-live.json" >&2; exit 2; fi
 
 TMP="$(mktemp -d)"
@@ -35,6 +38,13 @@ cleanup() {
 trap cleanup EXIT
 
 export GIT_AUTHOR_NAME=eval GIT_AUTHOR_EMAIL=eval@local GIT_COMMITTER_NAME=eval GIT_COMMITTER_EMAIL=eval@local
+
+# The audited model gets a plugin copy without test-fixtures/, evals/ or .superpowers/.
+PLUGIN="$META/plugin"
+mkdir -p "$PLUGIN"
+for part in .claude-plugin skills scripts shared; do
+  [ -e "$REPO/$part" ] && cp -R "$REPO/$part" "$PLUGIN/$part"
+done
 
 # 1. Copy the fixture (without the answer key), init git, replay history.
 cp -R "$FIXTURE"/. "$TMP/"
@@ -74,7 +84,7 @@ fi
 TOOLS="Read Grep Glob Write Edit Agent Bash(node:*) Bash(git:*) Bash(npm audit:*) Bash(ls:*) Bash(cat:*)"
 run_claude() { # $1 = prompt, $2 = transcript file
   local rc=0
-  (cd "$TMP" && claude -p "$1" --plugin-dir "$REPO" --permission-mode acceptEdits \
+  (cd "$TMP" && claude -p "$1" --plugin-dir "$PLUGIN" --permission-mode acceptEdits \
     --allowedTools "$TOOLS" --output-format json) > "$2" 2> "$2.err" || rc=$?
   if [ "$rc" -ne 0 ]; then
     echo "claude -p exited with status $rc. stderr:" >&2
@@ -128,6 +138,10 @@ if [ "$LIVE" -eq 1 ]; then
   fi
 fi
 
+if [ "$LIVE" -eq 1 ] && ! kill -0 "$MOCK_PID" 2>/dev/null; then
+  echo "FAIL: the live mock died during the run"; STATUS=1
+fi
+
 # 6. Fix mode: re-audit the fixed app and invert the scoring, then smoke-test it.
 if [ "$FIX" -eq 1 ]; then
   echo "--- fix check: fresh report-only run on the fixed app ---"
@@ -137,10 +151,10 @@ if [ "$FIX" -eq 1 ]; then
   run_claude "/vibe-secure:security-check Report only — don't fix anything. No live URL." "$META/transcript-recheck.json"
   collect "$RECHECK"
   node "$REPO/evals/score-run.mjs" --expected "$FIXTURE/expected-findings.json" --findings "$RECHECK/findings" --invert || STATUS=1
-  if [ -f "$TMP/smoke.mjs" ]; then
-    echo "--- smoke test ---"
-    (cd "$TMP" && node smoke.mjs) || { echo "FAIL: smoke test: the fixed app no longer works"; STATUS=1; }
-  fi
+  # smoke.mjs locates the app from its own path, so put a pristine copy into the audited copy and run it there.
+  echo "--- smoke test ---"
+  cp "$FIXTURE/smoke.mjs" "$TMP/smoke.mjs"
+  (cd "$TMP" && node smoke.mjs) || { echo "FAIL: smoke test: the fixed app no longer works"; STATUS=1; }
 fi
 
 [ "$STATUS" -eq 0 ] && echo "EVAL PASSED" || echo "EVAL FAILED"

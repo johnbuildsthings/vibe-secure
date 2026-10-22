@@ -4,7 +4,7 @@
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { validateFindingsFile, severityRank } from '../scripts/validate-findings.mjs';
+import { validateFindingsFile, severityRank, SEVERITIES } from '../scripts/validate-findings.mjs';
 
 const GATING = severityRank('high');
 const GIT_HISTORY = 'secrets.key-in-git-history';
@@ -21,10 +21,16 @@ export function scoreRun(expected, docs, { area, invert = false, dirMissing = fa
   const missed = [];
   const false_positives = [];
 
-  if (dirMissing || (docs.length === 0 && !expected.baseline)) invalid.push('no findings files');
+  // Skills always write a findings file per audited area (`findings: []` when clean).
+  if (dirMissing || docs.length === 0) invalid.push('no findings files');
+  const validDocs = [];
   docs.forEach((d, i) => {
-    for (const e of validateFindingsFile(d)) invalid.push(`findings file ${i + 1}: ${e}`);
+    const errs = validateFindingsFile(d);
+    for (const e of errs) invalid.push(`findings file ${i + 1}: ${e}`);
+    if (!errs.length) validDocs.push(d);
   });
+  const audited = (a) => validDocs.some((d) => d.area === a);
+  if (area && docs.length && !audited(area)) invalid.push(`no valid findings file for area ${area}`);
 
   const inArea = (x) => !area || x.area === area;
   const findings = docs.flatMap((d) => (Array.isArray(d?.findings) ? d.findings : [])).filter(inArea);
@@ -68,14 +74,41 @@ export function scoreRun(expected, docs, { area, invert = false, dirMissing = fa
     info.push(`NO GATING EXPECTATIONS for area ${area ?? '(any)'}: nothing was checked`);
   }
 
+  if (invert) {
+    for (const a of new Set(gating.map((e) => e.area))) {
+      if (!audited(a)) invalid.push(`NOT AUDITED: ${a}`);
+    }
+  }
+  if (!area && !expected.baseline && gating.length === 0) {
+    invalid.push('the expectations have no gating (critical/high) entries, so nothing would be checked');
+  }
+
   const pass = invalid.length === 0 && missed.length === 0 && false_positives.length === 0;
   return { pass, missed, false_positives, invalid, info };
+}
+
+export function validateExpected(d, name = 'expected file') {
+  const bad = (m) => { throw new Error(`${name}: ${m}`); };
+  if (d === null || typeof d !== 'object' || Array.isArray(d)) bad('must be a JSON object');
+  if (typeof d.baseline !== 'boolean') bad('baseline must be true or false');
+  if (!Array.isArray(d.expected)) bad('expected must be an array');
+  if ('ignore_checks' in d && !(Array.isArray(d.ignore_checks) && d.ignore_checks.every((x) => typeof x === 'string'))) {
+    bad('ignore_checks must be an array of strings');
+  }
+  d.expected.forEach((e, i) => {
+    if (e === null || typeof e !== 'object') bad(`expected[${i}] must be an object`);
+    if (typeof e.check !== 'string' || !e.check) bad(`expected[${i}].check must be a non-empty string`);
+    if (typeof e.area !== 'string' || !e.area) bad(`expected[${i}].area must be a non-empty string`);
+    if (!SEVERITIES.includes(e.min_severity)) bad(`expected[${i}].min_severity must be one of ${SEVERITIES.join(', ')}`);
+    if ('subject' in e && typeof e.subject !== 'string') bad(`expected[${i}].subject must be a string`);
+  });
+  return d;
 }
 
 export function loadExpected(files) {
   const merged = { baseline: false, ignore_checks: [], expected: [] };
   for (const file of files) {
-    const d = JSON.parse(readFileSync(file, 'utf8'));
+    const d = validateExpected(JSON.parse(readFileSync(file, 'utf8')), file);
     merged.baseline ||= d.baseline === true;
     merged.ignore_checks = [...new Set([...merged.ignore_checks, ...(d.ignore_checks ?? [])])];
     merged.expected.push(...(d.expected ?? []));
@@ -119,7 +152,13 @@ function main(argv) {
     console.error(e.message);
     return 1;
   }
-  const expected = loadExpected(o.expected);
+  let expected;
+  try {
+    expected = loadExpected(o.expected);
+  } catch (e) {
+    console.error(`bad expectations: ${e.message}`);
+    return 1;
+  }
   const { docs, dirMissing } = loadFindingsDir(o.findings);
   const r = scoreRun(expected, docs, { area: o.area, invert: o.invert, dirMissing });
   const label = o.invert ? 'after-fix' : 'report';
