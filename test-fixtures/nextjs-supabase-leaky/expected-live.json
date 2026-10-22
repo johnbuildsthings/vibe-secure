@@ -1,0 +1,9 @@
+{
+  "fixture": "nextjs-supabase-leaky",
+  "baseline": false,
+  "ignore_checks": [],
+  "expected": [
+    { "check": "db.rls-disabled", "subject": "profiles", "min_severity": "critical", "area": "live" },
+    { "check": "live.exposed-file", "subject": ".env", "min_severity": "critical", "area": "live" }
+  ]
+}

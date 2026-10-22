@@ -1,0 +1,10 @@
+{
+  "fixture": "react-firebase-open",
+  "baseline": false,
+  "ignore_checks": [],
+  "expected": [
+    { "check": "db.firestore-open-rules", "subject": "firestore.rules", "min_severity": "critical", "area": "db" },
+    { "check": "auth.ui-only-admin", "subject": "/admin", "min_severity": "high", "area": "auth" },
+    { "check": "auth.client-trusted-identity", "subject": "role", "min_severity": "high", "area": "auth" }
+  ]
+}

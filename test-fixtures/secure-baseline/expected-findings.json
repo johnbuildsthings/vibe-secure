@@ -1,0 +1,6 @@
+{
+  "fixture": "secure-baseline",
+  "baseline": true,
+  "ignore_checks": ["deps.known-vuln"],
+  "expected": []
+}

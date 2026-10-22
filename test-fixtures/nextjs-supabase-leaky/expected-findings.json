@@ -1,0 +1,15 @@
+{
+  "fixture": "nextjs-supabase-leaky",
+  "baseline": false,
+  "ignore_checks": [],
+  "expected": [
+    { "check": "secrets.server-key-in-client", "subject": "service_role", "min_severity": "critical", "area": "secrets" },
+    { "check": "secrets.key-in-git-history", "subject": "sk_live", "min_severity": "high", "area": "secrets" },
+    { "check": "db.rls-disabled", "subject": "profiles", "min_severity": "critical", "area": "db" },
+    { "check": "pay.webhook-unverified", "subject": "/api/stripe/webhook", "min_severity": "critical", "area": "payments" },
+    { "check": "pay.client-price", "subject": "/api/checkout", "min_severity": "high", "area": "payments" },
+    { "check": "inj.xss-html", "subject": "dangerouslySetInnerHTML", "min_severity": "high", "area": "injection" },
+    { "check": "deps.known-vuln", "subject": "lodash", "min_severity": "high", "area": "deps" },
+    { "check": "cfg.missing-headers", "subject": "next.config", "min_severity": "low", "area": "config" }
+  ]
+}

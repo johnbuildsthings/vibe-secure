@@ -1,0 +1,10 @@
+{
+  "fixture": "python-flask-generic",
+  "baseline": false,
+  "ignore_checks": [],
+  "expected": [
+    { "check": "inj.sql-string", "subject": "f-string query", "min_severity": "high", "area": "injection" },
+    { "check": "secrets.hardcoded-key", "subject": "SECRET_KEY", "min_severity": "high", "area": "secrets" },
+    { "check": "cfg.debug-in-prod", "subject": "debug=True", "min_severity": "medium", "area": "config" }
+  ]
+}
