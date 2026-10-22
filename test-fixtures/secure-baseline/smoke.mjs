@@ -3,6 +3,7 @@
 //   lib/supabase-public.js -> supabase
 //   lib/supabase-admin.js -> admin, getUser
 //   lib/escape.js -> escapeHtml
+//   lib/catalog.js -> findProduct, CATALOG
 //   app/api/checkout/route.js -> POST
 //   app/api/stripe/webhook/route.js -> POST
 //   app/api/chat/route.js -> POST
@@ -17,6 +18,7 @@ const EXPORTS = {
   'lib/supabase-public.js': ['supabase'],
   'lib/supabase-admin.js': ['admin', 'getUser'],
   'lib/escape.js': ['escapeHtml'],
+  'lib/catalog.js': ['findProduct', 'CATALOG'],
   'app/api/checkout/route.js': ['POST'],
   'app/api/stripe/webhook/route.js': ['POST'],
   'app/api/chat/route.js': ['POST'],

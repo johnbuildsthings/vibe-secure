@@ -4,9 +4,9 @@
   "ignore_checks": [],
   "expected": [
     { "check": "secrets.server-key-in-client", "subject": "NEXT_PUBLIC_OPENAI_API_KEY", "min_severity": "critical", "area": "secrets" },
-    { "check": "ai.client-side-llm-call", "subject": "openai", "min_severity": "high", "area": "ai" },
-    { "check": "ai.prompt-to-tool", "subject": "run_sql", "min_severity": "high", "area": "ai" },
-    { "check": "ai.no-usage-cap", "subject": "/api/agent", "min_severity": "high", "area": "ai" },
+    { "check": "ai.client-side-llm-call", "subject": "openai", "min_severity": "high", "area": "ai-features" },
+    { "check": "ai.prompt-to-tool", "subject": "run_sql", "min_severity": "high", "area": "ai-features" },
+    { "check": "ai.no-usage-cap", "subject": "/api/agent", "min_severity": "high", "area": "ai-features" },
     { "check": "inj.sql-string", "subject": "run_sql", "min_severity": "high", "area": "injection" }
   ]
 }

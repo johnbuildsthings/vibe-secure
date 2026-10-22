@@ -72,7 +72,9 @@ export function startMock({ appPort, dbPort, violations, fixture }) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       return res.end('{"message":"relation does not exist"}');
     }
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Range': '0-0/1204' });
+    // Like real PostgREST: the total is only counted when the caller asks for it.
+    const total = /count=exact/.test(req.headers.prefer ?? '') ? '1204' : '*';
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Range': `0-0/${total}` });
     res.end(req.method === 'HEAD' ? undefined : JSON.stringify([{ id: '00000000-0000-0000-0000-000000000001', name: 'Sample User', email: 'user@example.com' }]));
   });
 

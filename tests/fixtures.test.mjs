@@ -9,6 +9,7 @@ import { detectStack } from '../scripts/detect-stack.mjs';
 import { SEVERITIES } from '../scripts/validate-findings.mjs';
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), '..', 'test-fixtures');
+const AREAS = ['secrets', 'database-rules', 'auth', 'injection', 'payments', 'ai-features', 'config', 'dependencies', 'live'];
 const EXPECTED_FRAMEWORK = {
   'nextjs-supabase-leaky': 'next',
   'react-firebase-open': 'react-vite',
@@ -29,7 +30,7 @@ for (const [name, framework] of Object.entries(EXPECTED_FRAMEWORK)) {
     for (const e of doc.expected) {
       assert.equal(typeof e.check, 'string');
       assert.ok(SEVERITIES.includes(e.min_severity), `${e.check}: bad severity ${e.min_severity}`);
-      assert.equal(typeof e.area, 'string');
+      assert.ok(AREAS.includes(e.area), `${e.check}: bad area ${e.area}`);
     }
     if (doc.baseline) assert.deepEqual(doc.expected, []);
     else assert.ok(doc.expected.length > 0);
@@ -75,7 +76,13 @@ test('leaky: history.sh leaves a key in git history only', () => {
   assert.ok(!existsSync(join(dir, '.env.local')));
   assert.match(readFileSync(join(dir, '.gitignore'), 'utf8'), /^\.env\.local$/m);
   const first = git('rev-list', '--max-parents=0', 'HEAD').trim();
-  assert.match(git('show', `${first}:.env.local`), /sk_live_[A-Za-z0-9]{40}/);
+  const histKey = git('show', `${first}:.env.local`).match(/sk_live_[A-Za-z0-9]{40}/)?.[0];
+  assert.ok(histKey, 'history holds a 40-char sk_live key');
+  const walk = (d) => readdirSync(d, { withFileTypes: true }).flatMap((e) => e.name === '.git' ? [] : e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]);
+  for (const f of walk(join(FIX, 'nextjs-supabase-leaky'))) {
+    if (f.endsWith('history.sh')) continue;
+    assert.ok(!readFileSync(f, 'utf8').includes(histKey), `${f} must not contain the history-only key`);
+  }
 });
 
 function startMock(violations, fixture = 'nextjs-supabase-leaky') {
@@ -112,9 +119,11 @@ test('live mock: serves exposures, records rule-breaking requests', async () => 
     assert.equal(users.status, 200);
     assert.ok(Array.isArray(await users.json()));
 
-    const ok = await fetch(`${D}/rest/v1/profiles?select=*&limit=1`, { headers: { apikey: anon } });
+    const ok = await fetch(`${D}/rest/v1/profiles?select=*&limit=1`, { headers: { apikey: anon, Prefer: 'count=exact' } });
     assert.equal(ok.status, 200);
     assert.equal(ok.headers.get('content-range'), '0-0/1204');
+    const plain = await fetch(`${D}/rest/v1/profiles?select=*&limit=1`, { headers: { apikey: anon } });
+    assert.equal(plain.headers.get('content-range'), '0-0/*');
     assert.equal((await ok.json()).length, 1);
     assert.equal((await fetch(`${D}/rest/v1/profiles?select=*&limit=1`, { headers: { apikey: 'wrong' } })).status, 401);
     assert.ok(!existsSync(vfile) || readFileSync(vfile, 'utf8') === '', 'good requests record nothing');
