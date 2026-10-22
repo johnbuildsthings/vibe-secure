@@ -19,21 +19,65 @@ function readScope(root) {
   return null;
 }
 
-function countLogLines(logPath) {
-  try {
-    return fs.readFileSync(logPath, 'utf8').split('\n').filter((l) => l.length > 0).length;
-  } catch { return 0; }
+const OVERRIDE_HEADERS = ['x-http-method-override', 'x-http-method', 'x-method-override'];
+
+function decodedPath(u) {
+  let p = u.pathname;
+  for (let i = 0; i < 5; i++) {
+    const next = decodeURIComponent(p);
+    if (next === p) break;
+    p = next;
+  }
+  return p.toLowerCase();
 }
 
+const exactly = (u, name, value) => {
+  const all = u.searchParams.getAll(name);
+  return all.length === 1 && all[0] === value;
+};
+
 function isUnbounded(u) {
+  let path;
+  try { path = decodedPath(u); } catch { return true; } // undecodable path: refuse
   const host = u.hostname.toLowerCase();
-  const p = u.searchParams;
-  if (u.pathname.includes('/rest/v1/') && p.get('limit') !== '1') return true;
-  if (host === 'firestore.googleapis.com' && p.get('pageSize') !== '1') return true;
+  if (path.includes('/rest/v') && !exactly(u, 'limit', '1')) return true;
+  if (host === 'firestore.googleapis.com') {
+    if (!exactly(u, 'pageSize', '1')) return true;
+    if (u.searchParams.has('page_size') && !exactly(u, 'page_size', '1')) return true;
+  }
   const isFirebaseDb = host.endsWith('firebaseio.com') || host.endsWith('firebasedatabase.app');
-  if (isFirebaseDb && u.pathname.endsWith('.json') && p.get('shallow') !== 'true') return true;
+  if (isFirebaseDb && path.endsWith('.json') && !exactly(u, 'shallow', 'true')) return true;
   return false;
 }
+
+// URL for the log: no credentials, no fragment, every query value hidden, known secrets masked.
+function logUrl(u) {
+  const keys = [...u.searchParams.keys()].map((k) => `${encodeURIComponent(k)}=••••`);
+  return maskText(`${u.origin}${u.pathname}${keys.length ? '?' + keys.join('&') : ''}`);
+}
+
+const LOCK_STALE_MS = 30000;
+const LOCK_WAIT_MS = 60000;
+
+// Exclusive lock so cap-check + reservation are atomic across concurrent calls.
+async function withLock(dir, fn) {
+  fs.mkdirSync(dir, { recursive: true });
+  const lock = path.join(dir, 'live-requests.lock');
+  const start = Date.now();
+  for (;;) {
+    try { fs.closeSync(fs.openSync(lock, 'wx')); break; } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      try { if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) fs.unlinkSync(lock); } catch { /* raced */ }
+      if (Date.now() - start > LOCK_WAIT_MS) throw new Error('could not acquire the request log lock');
+      await sleep(5);
+    }
+  }
+  try { return await fn(); } finally { try { fs.unlinkSync(lock); } catch { /* already gone */ } }
+}
+
+const readLines = (logPath) => {
+  try { return fs.readFileSync(logPath, 'utf8').split('\n').filter((l) => l.length > 0); } catch { return []; }
+};
 
 // Reads the body fully (stopping at the cap) but keeps only the preview in memory.
 async function readBody(response) {
@@ -58,27 +102,46 @@ export async function safeFetch(url, opts = {}) {
 
   const scope = readScope(root);
   if (!scope) return { refused: 'no-scope' };
-  if (method !== 'GET' && method !== 'HEAD') return { refused: 'method-not-allowed' };
 
-  let u;
-  try { u = new URL(url); } catch { return { refused: 'host-not-in-scope' }; }
+  let u = null;
+  try { u = new URL(url); } catch { /* handled below */ }
+  const overrideHeader = Object.keys(headers).some((h) => OVERRIDE_HEADERS.includes(h.toLowerCase()));
+  const overrideParam = u && [...u.searchParams.keys()].some((k) => k.toLowerCase() === '_method');
+  if ((method !== 'GET' && method !== 'HEAD') || overrideHeader || overrideParam) {
+    return { refused: 'method-not-allowed' };
+  }
+
+  if (!u) return { refused: 'host-not-in-scope' };
   const hosts = scope.hosts.filter((h) => typeof h === 'string').map((h) => h.toLowerCase());
-  if (!['http:', 'https:'].includes(u.protocol) || !hosts.includes(u.host.toLowerCase())) {
+  if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password || !hosts.includes(u.host.toLowerCase())) {
     return { refused: 'host-not-in-scope' };
   }
   if (isUnbounded(u)) return { refused: 'unbounded-read' };
 
   const dir = path.join(root, '.vibe-secure');
   const logPath = path.join(dir, 'live-requests.log');
-  if (countLogLines(logPath) >= MAX_REQUESTS) return { refused: 'request-cap' };
+  const safeUrl = logUrl(u);
 
-  await sleep(delayMs);
-
-  const log = (status, bytes) => {
-    fs.mkdirSync(dir, { recursive: true });
+  // Claim a slot (and the inter-request delay) atomically before anything is sent.
+  const reservation = await withLock(dir, async () => {
+    const lines = readLines(logPath);
+    if (lines.length >= MAX_REQUESTS) return null;
+    const lastTs = Date.parse((lines.at(-1) ?? '').split('\t')[0]);
+    await sleep(Number.isNaN(lastTs) ? delayMs : Math.max(0, lastTs + delayMs - Date.now()));
     // Request headers are deliberately never logged: they may carry keys.
-    fs.appendFileSync(logPath, `${new Date().toISOString()}\t${method}\t${maskText(url)}\t${status}\t${bytes}\n`);
-  };
+    const prefix = `${new Date().toISOString()}\t${method}\t${safeUrl}\t`;
+    fs.appendFileSync(logPath, `${prefix}PENDING\t0\n`);
+    return prefix;
+  });
+  if (!reservation) return { refused: 'request-cap' };
+
+  // Fills in the real status on the reserved line. The count of lines never changes.
+  const complete = (status, bytes) => withLock(dir, async () => {
+    const lines = readLines(logPath);
+    const i = lines.lastIndexOf(`${reservation}PENDING\t0`);
+    if (i >= 0) lines[i] = `${reservation}${status}\t${bytes}`;
+    fs.writeFileSync(logPath, lines.join('\n') + '\n');
+  });
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -93,11 +156,13 @@ export async function safeFetch(url, opts = {}) {
     };
     const location = response.headers.get('location');
     if (location) result.redirect_location = maskText(location);
-    log(response.status, bytes);
+    await complete(response.status, bytes);
     return result;
   } catch (err) {
-    log('ERR', 0);
-    return { error: err.name === 'AbortError' ? `timeout after ${timeoutMs} ms` : String(err.message ?? err) };
+    await complete('ERR', 0).catch(() => {});
+    const raw = err.name === 'AbortError' ? `timeout after ${timeoutMs} ms` : String(err.message ?? err);
+    // Never echo the raw URL (it could carry credentials or tokens).
+    return { error: maskText(raw.split(url).join('<url>').split(u.href).join('<url>')) };
   } finally {
     clearTimeout(timer);
   }

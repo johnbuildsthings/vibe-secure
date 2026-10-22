@@ -37,6 +37,7 @@ function writeScope(hosts, extra = {}) {
     JSON.stringify({ hosts, confirmed_by_user: true, confirmed_at: new Date().toISOString(), ...extra }));
 }
 const logPath = () => path.join(root, '.vibe-secure/live-requests.log');
+const readLogLines = () => fs.readFileSync(logPath(), 'utf8').split('\n').filter(Boolean);
 const url = (p = '/') => `http://127.0.0.1:${port}${p}`;
 
 beforeEach(() => {
@@ -214,6 +215,80 @@ test('response body is never written to disk', async () => {
   await safeFetch(url(), { root, ...fast });
   const files = fs.readdirSync(path.join(root, '.vibe-secure'));
   assert.deepEqual(files.sort(), ['live-requests.log', 'live-scope.json']);
+});
+
+test('parallel calls at 49 lines send exactly 1 request', async () => {
+  fs.writeFileSync(logPath(), Array.from({ length: 49 }, (_, i) => `t\tGET\tu${i}\t200\t1\n`).join(''));
+  const results = await Promise.all(Array.from({ length: 10 }, () => safeFetch(url('/p'), { root, delayMs: 0, timeoutMs: 2000 })));
+  assert.equal(results.filter((r) => r.status === 200).length, 1);
+  assert.equal(results.filter((r) => r.refused === 'request-cap').length, 9);
+  assert.equal(hits.length, 1);
+  assert.equal(readLogLines().length, 50);
+});
+
+test('parallel calls are spaced by the delay', async () => {
+  const stamps = [];
+  const s2 = http.createServer((req, res) => { stamps.push(Date.now()); res.end('ok'); });
+  await new Promise((r) => s2.listen(0, '127.0.0.1', r));
+  const p2 = s2.address().port;
+  writeScope([`127.0.0.1:${p2}`]);
+  await Promise.all([1, 2, 3].map(() => safeFetch(`http://127.0.0.1:${p2}/`, { root, delayMs: 150, timeoutMs: 2000 })));
+  s2.close();
+  assert.equal(stamps.length, 3);
+  assert.ok(stamps[1] - stamps[0] >= 130 && stamps[2] - stamps[1] >= 130, JSON.stringify(stamps));
+});
+
+test('encoded / differently-cased / duplicated-param bypasses are refused', async () => {
+  writeScope([`127.0.0.1:${port}`, 'firestore.googleapis.com', 'p.firebaseio.com']);
+  const bad = [
+    url('/rest/v%31/profiles'),
+    url('/REST/V1/p'),
+    url('/rest/v1/p?limit=1&limit=1000'),
+    url('/rest/v1/p?limit=1000&limit=1'),
+    url('/rest/%2576%31/p'),
+    'https://firestore.googleapis.com/v1/x?pageSize=1&pageSize=100',
+    'https://firestore.googleapis.com/v1/x?pageSize=1&page_size=100',
+    'https://p.firebaseio.com/users.json?shallow=true&shallow=false',
+    'https://p.firebaseio.com/USERS.JSON',
+  ];
+  for (const u of bad) assert.deepEqual(await safeFetch(u, { root, ...fast }), { refused: 'unbounded-read' }, u);
+  assert.equal(hits.length, 0);
+});
+
+test('method-override headers and _method param are refused', async () => {
+  for (const h of ['X-HTTP-Method-Override', 'x-http-method', 'X-Method-Override']) {
+    assert.deepEqual(await safeFetch(url(), { root, headers: { [h]: 'DELETE' }, ...fast }), { refused: 'method-not-allowed' }, h);
+  }
+  assert.deepEqual(await safeFetch(url('/?_method=DELETE'), { root, ...fast }), { refused: 'method-not-allowed' });
+  assert.deepEqual(await safeFetch(url('/?_METHOD=DELETE'), { root, ...fast }), { refused: 'method-not-allowed' });
+  assert.equal(hits.length, 0);
+});
+
+test('URLs with credentials are refused before using a slot, and never logged', async () => {
+  const r = await safeFetch(`http://admin:hunter2@127.0.0.1:${port}/`, { root, ...fast });
+  assert.deepEqual(r, { refused: 'host-not-in-scope' });
+  assert.equal(hits.length, 0);
+  assert.ok(!fs.existsSync(logPath()));
+});
+
+test('query values are masked in the log; no tabs/newlines can forge lines', async () => {
+  await safeFetch(url('/x?auth=opaqueTOKEN123&b=%0Aforged%09line'), { root, ...fast });
+  const raw = fs.readFileSync(logPath(), 'utf8');
+  assert.ok(!raw.includes('opaqueTOKEN123'));
+  assert.ok(!raw.includes('forged'));
+  assert.ok(raw.includes('?auth=••••&b=••••'));
+  assert.equal(readLogLines().length, 1);
+  assert.equal(readLogLines()[0].split('\t').length, 5);
+});
+
+test('network errors do not echo the raw URL', async () => {
+  const dead = http.createServer(); await new Promise((r) => dead.listen(0, '127.0.0.1', r));
+  const dp = dead.address().port; await new Promise((r) => dead.close(r));
+  writeScope([`127.0.0.1:${dp}`]);
+  const r = await safeFetch(`http://127.0.0.1:${dp}/?token=abc123secret`, { root, ...fast });
+  assert.equal(typeof r.error, 'string');
+  assert.ok(!r.error.includes('abc123secret'));
+  assert.equal(readLogLines()[0].split('\t')[3], 'ERR');
 });
 
 // Async spawn: spawnSync would block the event loop that serves the test HTTP server.
