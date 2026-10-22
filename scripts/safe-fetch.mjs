@@ -28,7 +28,8 @@ function decodedPath(u) {
     if (next === p) break;
     p = next;
   }
-  return p.toLowerCase();
+  // Gateways merge duplicate slashes (and some treat backslashes as slashes).
+  return p.toLowerCase().replace(/\\/g, '/').replace(/\/{2,}/g, '/');
 }
 
 const exactly = (u, name, value) => {

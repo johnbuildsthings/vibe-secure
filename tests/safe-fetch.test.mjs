@@ -243,6 +243,10 @@ test('encoded / differently-cased / duplicated-param bypasses are refused', asyn
   const bad = [
     url('/rest/v%31/profiles'),
     url('/REST/V1/p'),
+    url('/rest//v1/p'),
+    url('/rest/v1//p'),
+    url('//rest///v1/p'),
+    url('/rest%2F%2Fv1/p'),
     url('/rest/v1/p?limit=1&limit=1000'),
     url('/rest/v1/p?limit=1000&limit=1'),
     url('/rest/%2576%31/p'),
