@@ -13,7 +13,7 @@ The rule everywhere: the SQL text is fixed, and visitor values travel separately
 const { rows } = await pool.query('SELECT * FROM invoices WHERE status = $1', [status]);
 ```
 
-`postgres` (porsager), Neon's `neon()` and `@vercel/postgres` `sql` are safe when used as a **tag**: `` await sql`SELECT * FROM invoices WHERE status = ${status}` ``. Calling them as a function with a pre-built string is not.
+`postgres` (porsager), Neon's `neon()` and `@vercel/postgres` `sql` are safe when used as a **tag**: `` await sql`SELECT * FROM invoices WHERE status = ${status}` ``. For a query whose text is built at run time, Neon's function form takes the values separately: `await sql.query('SELECT * FROM invoices WHERE status = $1', [status])`. Passing a pre-built string with the values pasted in is not safe in any of them.
 
 ### mysql2, better-sqlite3, sqlite3
 
@@ -34,7 +34,7 @@ const rows = await prisma.invoice.findMany({ where: { status } });
 
 If `$queryRawUnsafe` must stay (a dynamic query), pass values as extra arguments: `prisma.$queryRawUnsafe('SELECT * FROM "Invoice" WHERE status = $1', status)`.
 
-### Drizzle and Knex
+### Drizzle, Knex, Kysely, Sequelize, TypeORM
 
 ```ts
 import { sql, eq } from 'drizzle-orm';
@@ -43,7 +43,16 @@ await db.execute(sql`SELECT * FROM invoices WHERE status = ${status}`);       //
 
 await knex('invoices').where({ status });                                     // Knex builder
 await knex.raw('SELECT * FROM invoices WHERE status = ?', [status]);          // Knex raw with bindings
+await knex('invoices').whereRaw('total_cents > ?', [min]);                    // not whereRaw(`total_cents > ${min}`)
+
+await db.selectFrom('invoices').selectAll().where('status', '=', status).execute(); // Kysely; never sql.raw / sql.lit / sql.ref with request data
+
+await Invoice.findAll({ where: { status } });                                 // Sequelize; never Sequelize.literal(userText)
+
+await repo.createQueryBuilder('i').where('i.status = :status', { status }).getMany(); // TypeORM; not .where(`i.status = '${status}'`)
 ```
+
+For a sort column in any builder (`.orderBy(...)`, `.orderByRaw(...)`), pick it from a fixed map as below.
 
 ### Sort columns and other identifiers
 
@@ -59,9 +68,9 @@ Only the values from the fixed map reach the SQL text, so this is safe even thou
 ### Python DB-API (`sqlite3`, `psycopg`, `pymysql`, `mysqlclient`)
 
 ```python
-# Before: db.execute(f"SELECT id, name FROM customers WHERE name = '{name}'")
-rows = db.execute("SELECT id, name FROM customers WHERE name = ?", (name,)).fetchall()  # sqlite3
-cur.execute("SELECT id, name FROM customers WHERE name = %s", (name,))                  # psycopg, pymysql
+# Before: cur.execute(f"SELECT code, title FROM products WHERE category = '{category}'")
+cur.execute("SELECT code, title FROM products WHERE category = ?", (category,))   # sqlite3
+cur.execute("SELECT code, title FROM products WHERE category = %s", (category,))  # psycopg, pymysql
 ```
 
 The placeholder style depends on the driver (`?` for sqlite3, `%s` for psycopg and the MySQL drivers). Never put the value into the string with `%`, `.format()` or an f-string.
@@ -70,32 +79,43 @@ The placeholder style depends on the driver (`?` for sqlite3, `%s` for psycopg a
 
 ```python
 from sqlalchemy import text
-session.execute(text("SELECT * FROM customers WHERE name = :name"), {"name": name})
+session.execute(text("SELECT * FROM products WHERE category = :category"), {"category": category})
 
-Customer.objects.filter(name=name)                                            # Django ORM
-Customer.objects.raw("SELECT * FROM app_customer WHERE name = %s", [name])    # Django raw with params
+Product.objects.filter(category=category)                                          # Django ORM
+Product.objects.raw("SELECT * FROM shop_product WHERE category = %s", [category])  # Django raw with params
 ```
 
 ### Supabase SQL functions (`.rpc()`)
 
 ```sql
--- Before: EXECUTE format('SELECT * FROM %s WHERE note = ''%s''', tbl, search);
+-- Before: EXECUTE format('SELECT * FROM %s WHERE note = ''%s''', tbl, term);
 -- %I quotes an identifier, %L quotes a literal; USING passes values as parameters.
-RETURN QUERY EXECUTE format('SELECT * FROM %I WHERE note = $1', tbl) USING search;
+RETURN QUERY EXECUTE format('SELECT * FROM %I WHERE note = $1', tbl) USING term;
 ```
 
-If the table name comes from the caller, also check it against a fixed list inside the function (`IF tbl NOT IN ('notes', 'tasks') THEN RAISE EXCEPTION 'not allowed'; END IF;`). If the query isn't dynamic at all, drop `EXECUTE` and write plain SQL in the function body.
+If only signed-in users should call it, add `IF auth.uid() IS NULL THEN RAISE EXCEPTION 'not signed in'; END IF;` at the top, or `REVOKE EXECUTE ON FUNCTION <name>(<arg types>) FROM anon, public;` in a migration. If the table name comes from the caller, also check it against a fixed list inside the function (`IF tbl NOT IN ('notes', 'tasks') THEN RAISE EXCEPTION 'not allowed'; END IF;`). If the query isn't dynamic at all, drop `EXECUTE` and write plain SQL in the function body.
 
 ### Supabase `.or()` / `.filter()` strings
 
 ```js
 // Before: .or(`name.ilike.%${q}%,email.ilike.%${q}%`)
-const safe = q.replace(/[,()."\\:%]/g, ' ').trim();  // remove filter syntax and wildcards from the visitor's text
+// Remove filter syntax (, . : ( ) " \) and the ilike wildcards (% * _) from the visitor's text.
+const safe = q.replace(/[,.:()"\\%*_]/g, ' ').trim();
 const { data } = await supabase.from('contacts').select('id, name').or(`name.ilike.%${safe}%,email.ilike.%${safe}%`);
-// Or, for a single column, use the builder: .ilike('name', `%${safe}%`)
+// Or, for a single column, use the builder: .ilike('name', `%${q}%`)
 ```
 
-`may_break`: searches for text containing commas, dots or brackets match a little more loosely.
+`may_break`: searches for text containing commas, dots, brackets, underscores or `*` match a little more loosely.
+
+### Supabase columns from the request (`.select()`, `.order()`, column arguments)
+
+```js
+const SORTABLE = { newest: 'created_at', name: 'name' };
+const column = SORTABLE[searchParams.get('sort')] ?? 'created_at';
+const { data } = await supabase.from('contacts').select('id, name, created_at').order(column, { ascending: false });
+```
+
+Never pass the visitor's text as the `.select()` string; list the columns in code.
 
 ### AI tools that run SQL
 
@@ -132,10 +152,10 @@ The rule: render visitor text as text. When it really must contain HTML, sanitis
 ### Plain text (best when the field isn't meant to hold HTML)
 
 ```jsx
-<p className="bio">{profile.bio}</p>             {/* React */}
-<p class="bio">{{ profile.bio }}</p>             <!-- Vue -->
-<p class="bio">{profile.bio}</p>                 <!-- Svelte -->
-el.textContent = profile.bio;                    // DOM
+<p className="comment">{comment.text}</p>         {/* React */}
+<p class="comment">{{ comment.text }}</p>         <!-- Vue -->
+<p class="comment">{comment.text}</p>             <!-- Svelte -->
+el.textContent = comment.text;                  // DOM
 ```
 
 Add `white-space: pre-line` in CSS if line breaks should show.
@@ -187,7 +207,7 @@ function safeUrl(value) {
 - Jinja / Flask: remove `|safe` and `Markup(...)` on user data; keep autoescape on (don't use `{% autoescape false %}`). For rich text, `bleach.clean(html, tags=[...])` or `nh3.clean(html)` before `Markup`.
 - Django: remove `|safe` and `mark_safe(...)` on user data.
 - Handlebars / Mustache: `{{ value }}` instead of `{{{ value }}}`. EJS: `<%= value %>` instead of `<%- value %>`. Pug: `#{value}` instead of `!{value}`.
-- HTML built as a string in a route: escape every value (an escape that encodes `& < > " '`, such as `html.escape(value, quote=True)` in Python), or render a template instead.
+- HTML built as a string in a route (a Flask view returning an f-string, Express `res.send(html)`): escape every value (an escape that encodes `& < > " '`, such as `html.escape(value, quote=True)` in Python), or render a template instead.
 
 ## Check 3: `inj.eval`
 
@@ -215,7 +235,7 @@ Use a math-only evaluator such as `expr-eval` or `mathjs` with a restricted scop
 ```js
 import { execFile } from 'node:child_process';
 // Before: exec(`convert ${req.body.file} out.png`)
-execFile('convert', [inputPath, 'out.png'], (err) => { /* ... */ });  // no shell; arguments can't add commands
+execFile('convert', [inputPath, 'out.png'], (err) => { /* ... */ });  // no shell (never add { shell: true }); arguments can't add commands
 ```
 
 ```python
