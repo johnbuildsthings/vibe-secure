@@ -39,7 +39,7 @@ Follow the run contract in `<root>/shared/area-skill-template.md` (Part 2). In s
 Report only the three checks below. One root cause is one finding. If you notice any of these, mention it in one line of your reply, name the skill, and write no finding:
 
 - a Stripe secret key (`sk_…`, `rk_…`) or webhook secret (`whsec_…`) in browser code, a `NEXT_PUBLIC_`/`VITE_` variable, a hard-coded string or git history → `check-secrets`. (A webhook secret in a public variable is also check 1 here, because it lets anyone sign fake events; the leak and its rotation stay with `check-secrets`.)
-- a checkout, billing or customer-portal route with no login check, or one that trusts a user id from the request → `check-auth`. Webhooks never need a login: their signature is their authentication;
+- a checkout, billing or customer-portal route with no login check, or one that trusts an app user id from the request → `check-auth`. Webhooks never need a login: their signature is their authentication. A Stripe **customer** id taken from the request (`customer: body.customerId`) is yours: check 3;
 - the database rule or policy that lets users change their own `plan`, `credits` or `subscription_status` → `check-database-rules`. Your finding (check 3) is the app code that writes it from an untrusted source;
 - SQL or HTML built from user input → `check-injection`; missing headers, CORS → `check-config`; an old `stripe` package version → `check-dependencies`.
 
@@ -48,7 +48,8 @@ Report only the three checks below. One root cause is one finding. If you notice
 1. **Stripe calls:** search app code for `stripe.checkout.sessions.create`, `paymentIntents.create`, `subscriptions.create`, `invoiceItems.create`, `paymentLinks.create`, `prices.create`, `checkout.sessions.retrieve`, `webhooks.constructEvent`, `constructEventAsync`, and the Python forms (`stripe.checkout.Session.create`, `stripe.PaymentIntent.create`, `stripe.Webhook.construct_event`).
 2. **Webhook handlers:** any handler that reads Stripe event types (`checkout.session.completed`, `invoice.paid`, `invoice.payment_succeeded`, `customer.subscription.`, `payment_intent.succeeded`, `event.type`, `event.data.object`) or the `stripe-signature` header, whatever its file name.
 3. **Plan and credit writes:** writes of fields that say what someone paid for: `plan`, `tier`, `is_pro`, `is_premium`, `premium`, `paid`, `credits`, `balance`, `subscription_status`, `subscription_tier`, `stripe_price_id`, `order.status = 'paid'`, in browser code, routes, server actions and functions.
-4. **Success pages:** the page or route named in `success_url`, and any page that reads `session_id`, `paid`, `success` or `plan` from the URL.
+4. **Customer ids:** `customer:` / `customerId` arguments to `billingPortal.sessions.create`, `checkout.sessions.create` and `subscriptions.*`, and where their value comes from.
+5. **Success pages:** the page or route named in `success_url`, and any page that reads `session_id`, `paid`, `success` or `plan` from the URL.
 
 **Route paths (the subject for every check):** the path as callers use it, with dynamic parts as `:name`. Next.js App Router `app/api/billing/webhook/route.js` → `/api/billing/webhook` (route groups in parentheses are dropped); Pages Router `pages/api/x.js` → `/api/x`; a page `app/checkout/success/page.jsx` → `/checkout/success`; Express/Flask/FastAPI: the mount path plus the route path; SvelteKit `src/routes/api/x/+server.js` → `/api/x`; a server action → `action:<functionName>`; a Supabase Edge Function → `/functions/v1/<name>`; a Firebase or other cloud function → `fn:<exported name>`.
 
@@ -68,7 +69,7 @@ A webhook URL is public: anyone who finds it can post a made-up `checkout.sessio
 3. **Failure doesn't stop it:** verification sits in a `try/catch` (or `try/except`) whose catch logs, ignores the error, or falls back to the parsed body and carries on, instead of returning a 400.
 4. **Secret in a public variable:** the webhook secret is read from a browser-exposed variable (`NEXT_PUBLIC_…`, `VITE_…`, `REACT_APP_…`, `EXPO_PUBLIC_…`, `PUBLIC_…`). Whoever has the secret can sign their own events.
 5. **Already-parsed body:** `constructEvent` gets a body the framework already turned into an object or re-serialised (`JSON.stringify(req.body)`, `req.body` in a Next.js **Pages Router** API route without `export const config = { api: { bodyParser: false } }`, or an Express route with `express.json()` / `bodyParser.json()` applied before it and no `express.raw({ type: 'application/json' })` on that route). Real Stripe events then always fail the check.
-6. **Sync check on the edge:** a Supabase Edge Function (or Deno / Cloudflare Worker) calling `constructEvent` instead of `await stripe.webhooks.constructEventAsync(…)` with `Stripe.createSubtleCryptoProvider()`. It throws on every real event.
+6. **Sync check on the edge:** an edge runtime calling `constructEvent` instead of `await stripe.webhooks.constructEventAsync(…)` with `Stripe.createSubtleCryptoProvider()`: a Supabase Edge Function, a Next.js route or middleware with `export const runtime = 'edge'`, a Vercel or Netlify Edge Function, a Deno or Cloudflare Worker. It throws on every real event.
 
 **Confirm:** point at the handler line and the line that acts on the event (a database write, an email, granting access), and show which of 1–6 applies.
 
@@ -86,6 +87,7 @@ If the unverified handler also grants the wrong thing (check 3's fulfilment rule
 - `amount`, `unit_amount`, `unit_amount_decimal`, or anything inside `price_data` that sets money (`unit_amount`, `recurring` together with an amount);
 - a total computed from prices the browser sent (`items.reduce((sum, i) => sum + i.price * i.quantity, 0)`);
 - `price` (a Stripe price id) passed straight through, not checked against a fixed list or looked up from a product id in your code or database;
+- a total your code computes from a server-side price times a `quantity` from the request that isn't checked to be a whole number between 1 and a sensible maximum (a negative, zero or fractional quantity lowers the total, and can cancel out other items in a cart). A quantity passed as a Stripe line item's `quantity` is different: Stripe itself rejects anything below 1 or not whole;
 - `discounts: [{ coupon: … }]` or `promotion_code` taken from the request without a check (any coupon in your account, including 100%-off ones, can be applied).
 
 **Confirm:** trace the value from the request to the create call with no lookup in between. Follow helpers.
@@ -95,27 +97,41 @@ If the unverified handler also grants the wrong thing (check 3's fulfilment rule
 ### 3. `pay.client-subscription-status`: people can give themselves a paid plan without paying
 
 **Subject:** the route path or `action:<functionName>` that writes the plan, credits or paid status (the webhook route when the problem is in its fulfilment logic, the success page's path when that page grants access). When browser code writes it straight to the database, the **table** (or collection) name (`accounts`, `users`).
-**OWASP:** `A08:2025 Software or Data Integrity Failures`. **fix_risk:** `high` for the critical cases (the grant moves to the webhook or to a server-side Stripe lookup); `low` for the fulfilment cases (an extra condition in the webhook). `may_break`: name the screens that set the plan today and say they'll now wait for Stripe to confirm.
+**OWASP:** `A08:2025 Software or Data Integrity Failures`. **fix_risk:** `high` for the critical cases (the grant moves to the webhook or to a server-side Stripe lookup), for revoking subscriptions (people who cancelled lose the plan) and for the customer-id case (the billing screens must stop sending it); `low` for the other webhook conditions (an extra check before granting). `may_break`: name the screens that set the plan today and say they'll now wait for Stripe to confirm.
 
 A plan, credit balance or paid status may only be set from a **verified** Stripe event (check 1) or from data your server fetched from Stripe's API itself. Report it when:
 
 | Case | Severity |
 |---|---|
-| Browser code writes the paid field to the database (Supabase `.update({ plan: … })`, Firestore `updateDoc`/`setDoc` with `plan`, `credits`, `isPro`), whether or not it runs after a checkout. A write that can only set the free or default value (for example on sign-up) is not a finding | `critical` |
+| Browser code writes the paid field to the database (Supabase `.update({ plan: … })`, Firestore `updateDoc`/`setDoc` with `plan`, `credits`, `isPro`), whether or not it runs after a checkout, **and** the database accepts that write (see "Is the browser write open?" below) | `critical`. Blocked → not a finding; can't tell → `unverified` |
 | A route, server action or function sets the paid field from request data (`body.plan`, `body.credits`, `amount` added to a balance), or after a check the buyer controls | `critical` |
 | A success page or route grants access from the URL: `?paid=true`, `?plan=pro`, or a `session_id` it never fetches from Stripe on the server (`stripe.checkout.sessions.retrieve`) and checks | `critical` |
 | A success page fetches the session but doesn't check that it belongs to the signed-in user (its `client_reference_id`, `customer` or metadata user id), so any paid session id can be replayed for another account | `high` |
 | A webhook (verified or not) grants a fixed plan for **any** completed checkout or payment, without checking which price or product was bought (the line items' `price.id`, a product id your server wrote into metadata and looks up again) | `high`: anyone who buys your cheapest item, or pays any other payment link in your Stripe account, gets the plan |
-| A webhook takes the plan from metadata your checkout copied straight from the request (`metadata: { plan: body.plan }`) while the price was chosen separately | `high` |
+| A webhook takes the plan, the number of credits or the quantity to grant from metadata your checkout copied straight from the request (`metadata: { plan: body.plan }`, `metadata: { credits: body.credits }`) while the price was chosen separately | `high` |
+| A webhook grants on the wrong event, or on any event: no `event.type` check at all, or a grant on an event that doesn't mean "paid" (`checkout.session.expired`, `payment_intent.created`, `payment_intent.payment_failed`, `invoice.created`, `customer.subscription.created` without checking `status` is `active` or `trialing`) | `high`: starting a checkout and walking away, or a failed card, is enough |
+| A grant that **adds** credits, balance or uses (`credits + n`, an `increment`, an `insert` of a credit row) on the success page or in the webhook, without first recording the checkout session id or event id as used (a unique column or table checked in the same step) | `critical` when the user can repeat it (reloading the success page, re-sending its request); `medium` when only Stripe's own retries can repeat it (webhook) |
+| A subscription-mode checkout grants a plan, but nothing takes it away: no handler for `customer.subscription.deleted`, none for `customer.subscription.updated` moving to `canceled`, `unpaid`, `past_due` or `incomplete_expired`, and none for `invoice.payment_failed`. Also report it when those handlers set the plan from the event type alone instead of the subscription's `status` (or a fresh `stripe.subscriptions.retrieve`), because Stripe can deliver events out of order and an old "updated" event can re-grant | `high`: anyone can subscribe once, cancel or let the card fail, and keep the plan. Subject: the webhook route |
+| A Stripe customer id taken from the request (`customer: body.customerId`, a `customerId` query parameter) in `billingPortal.sessions.create`, `checkout.sessions.create`, `subscriptions.create`/`update`/`cancel`, or `customers.retrieve`, instead of the customer id your server stored for the signed-in user | `high`: anyone who learns another customer's id (`cus_…`, shown in receipts and URLs) can open their billing portal, change or cancel their subscription, or see their invoices and card details. Subject: `customerId` |
 | A `checkout.session.completed` handler grants without checking `session.payment_status === 'paid'` (or `'no_payment_required'` for free trials) | `medium`: delayed payment methods (bank debits, vouchers) complete the session before the money arrives, and may never pay |
 
-One finding per subject: when one handler has several of these, use the worst severity and list every line in `evidence`. When the browser writes the paid field directly, say in `impact` that whether the database accepts it is reported by `check-database-rules`.
+One finding per subject: when one handler has several of these, use the worst severity and list every line in `evidence`.
+
+Stripe-hosted Payment Links and the Pricing Table set the price in Stripe (not check 2), but the webhook that fulfils them is still checked here.
+
+**Is the browser write open?** A browser write of a paid field is only a finding when the database lets it through. Read the rules for that table or collection:
+
+- **Supabase:** open when RLS is off on the table, or an `update`/`insert` policy (or `all`) lets users write their own row and nothing protects the column. It is **blocked** when column grants leave the field out (`revoke update on <table> from authenticated` then `grant update (<other columns>) on <table> to authenticated`), a trigger rejects or resets changes to it, the policy's `with check` pins it to its current value, or there is no update/insert policy at all. A browser client built with the `service_role` key bypasses all of this, so it is open.
+- **Firestore:** open when the rule for that document allows `update`/`create`/`write` without restricting fields. **Blocked** when the rule checks `request.resource.data.diff(resource.data).affectedKeys().hasOnly([...])` with a list that leaves the paid field out, or `!…affectedKeys().hasAny([...])` with a list that includes it, or pins it (`request.resource.data.plan == resource.data.plan`).
+- **Can't find the rules** (no migrations, rules managed only in a dashboard) → `unverified`, under "worth a look": say what to check.
+
+Blocked → write no finding and add an "already good" line ("Your app's browser code tries to set `plan`, but the database refuses it, so only your webhook can change it"); the browser code is dead weight, which you may mention. Open → `critical`, and say in `impact` that `check-database-rules` reports the rule itself.
 
 **Confirm:** point at the line that writes the paid field and trace where its value and the decision to write it come from.
 
 ## Fixes
 
-Read `references/payments-fixes.md` before writing any `fix_plan` or applying a fix. It has, per stack: verified webhooks for the Next.js App Router, the Pages Router, Express, Supabase Edge Functions and Python (Flask, FastAPI); a server-side price catalog or price-id allowlist for Checkout and PaymentIntents; fulfilment that checks the product bought and `payment_status` (plus `checkout.session.async_payment_succeeded`); a success page that verifies the session with Stripe; moving browser plan writes to the webhook; and where to find and set the webhook signing secret.
+Read `references/payments-fixes.md` before writing any `fix_plan` or applying a fix. It has, per stack: verified webhooks for the Next.js App Router, the Pages Router, Express, Supabase Edge Functions and Python (Flask, FastAPI); a server-side price catalog or price-id allowlist for Checkout and PaymentIntents; fulfilment that checks the event type, the product bought and `payment_status` (plus `checkout.session.async_payment_succeeded`); one-time credit grants recorded by session id; subscription revocation from `subscription.status`; the customer id from your own records; a success page that verifies the session with Stripe; moving browser plan writes to the webhook; and where to find and set the webhook signing secret.
 
 Before writing `may_break`, search for the callers of the code you will change (browser `fetch` calls to the route, forms, pages that set the plan) and name them with `file:line`.
 
@@ -124,17 +140,17 @@ Before writing `may_break`, search for the callers of the code you will change (
 - Stripe publishable keys (`pk_live_…`, `pk_test_…`) in browser code: they are meant to be public.
 - A **verified** webhook: `constructEvent(rawBody, signature, secret)` on `await req.text()` (App Router), on a raw buffer with `bodyParser: false` (Pages Router), on `express.raw({ type: 'application/json' })` (Express), `await constructEventAsync(…)` in Edge Functions, `construct_event(request.data / await request.body(), …)` in Python, with a failed check returning 400 before anything else happens.
 - A webhook that ignores the body and re-fetches the event from Stripe (`stripe.events.retrieve(event.id)`) and acts only on what Stripe returns.
-- A price id from the browser checked against a server allowlist (a fixed map or list, or a product row looked up by id); amounts from a server-side catalog or database lookup; `quantity` from the browser with a server-chosen price (Stripe rejects quantities below 1).
+- A price id from the browser checked against a server allowlist (a fixed map or list, or a product row looked up by id); amounts from a server-side catalog or database lookup; `quantity` from the browser passed as a Stripe line item's `quantity` with a server-chosen price (Stripe rejects quantities below 1 or not whole). A quantity your own code multiplies into an amount is check 2 unless it is validated.
 - Metadata your server wrote at checkout from a server-side lookup (a product id it then looks up again in the webhook), read back from a verified event; the user id in `client_reference_id` taken from the verified session at checkout.
-- Stripe-hosted pricing: Payment Links, the Pricing Table, the Customer Portal (prices are set in the Stripe dashboard).
+- Prices of Stripe-hosted pricing (Payment Links, the Pricing Table) and the Customer Portal opened for the customer id your server stored: prices are set in the Stripe dashboard. Their fulfilment is still check 3.
 - A success page that only shows a "thanks" message and grants nothing.
-- No deduplication of webhook event ids when the grant sets a fixed value (a replayed event changes nothing).
+- No deduplication of webhook event ids when the grant **sets** a fixed value (a replayed event changes nothing). Grants that add credits are check 3.
 - Reading the plan to show or hide things in the UI, when the server or rules enforce it.
 - Test files, Stripe CLI fixtures, seed scripts, and anything under the excluded paths.
 
 ## What's already good
 
-Collect lines like these, only for things you actually checked: "Your Stripe webhook checks Stripe's signature on the raw body before doing anything", "Your checkout looks up each price on the server, so buyers can't change it", "Plans are only granted by the verified webhook, after Stripe says the payment is paid", "Your webhook grants only the plan that matches the product bought", "Your success page asks Stripe whether the session was paid before showing access", "Your webhook signing secret is only read in server code", "The Stripe key in the browser is the publishable key, which is meant to be public".
+Collect lines like these, only for things you actually checked: "Your Stripe webhook checks Stripe's signature on the raw body before doing anything", "Your checkout looks up each price on the server, so buyers can't change it", "Plans are only granted by the verified webhook, after Stripe says the payment is paid", "Your webhook grants only the plan that matches the product bought", "Your success page asks Stripe whether the session was paid before showing access", "Your webhook signing secret is only read in server code", "Each checkout adds credits only once, even if the page is reloaded", "Cancelled or unpaid subscriptions lose the paid plan", "Your billing portal uses the customer id stored for the signed-in user", "The Stripe key in the browser is the publishable key, which is meant to be public".
 
 ## Findings file
 
