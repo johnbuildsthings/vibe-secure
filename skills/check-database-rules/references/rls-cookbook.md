@@ -114,11 +114,14 @@ create policy "owners read their files" on storage.objects
   for select to authenticated using (bucket_id = 'uploads' and auth.uid()::text = (storage.foldername(name))[1]);
 create policy "owners upload their files" on storage.objects
   for insert to authenticated with check (bucket_id = 'uploads' and auth.uid()::text = (storage.foldername(name))[1]);
+create policy "owners replace their files" on storage.objects
+  for update to authenticated using (bucket_id = 'uploads' and auth.uid()::text = (storage.foldername(name))[1])
+  with check (bucket_id = 'uploads' and auth.uid()::text = (storage.foldername(name))[1]);
 create policy "owners delete their files" on storage.objects
   for delete to authenticated using (bucket_id = 'uploads' and auth.uid()::text = (storage.foldername(name))[1]);
 ```
 
-A `security definer` function that the browser doesn't need: `revoke execute on function public.<name> from anon, authenticated, public;`. If the browser does need it, check `auth.uid()` inside it against the rows it touches, or make it `security invoker` so RLS applies.
+A `security definer` function that the browser doesn't need: `revoke execute on function public.<name> from public, anon, authenticated;` (all three: Postgres grants execute to `public` by default, and `anon` inherits it). If the browser does need it, check `auth.uid()` inside it against the rows it touches, or make it `security invoker` so RLS applies.
 
 **May break:** links to files in a bucket that was public stop working; use signed URLs (`createSignedUrl`) instead.
 
