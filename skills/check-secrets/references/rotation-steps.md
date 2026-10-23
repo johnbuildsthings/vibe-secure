@@ -1,6 +1,6 @@
 # Rotating leaked keys
 
-Use these steps for `manual_steps` whenever a key was leaked: shipped to the browser, committed to git, or found in git history. Copy the steps for the right provider and name the **masked** key (`sk_live_HI…KE`) in the first step so the user rotates the right one. Never include the full key.
+Use these steps for `manual_steps` whenever a key was leaked: shipped to the browser, committed to git, or found in git history. Copy the steps for the right provider and name the **masked** key (`sk_live_4f…a9`) in the first step so the user rotates the right one. Never include the full key.
 
 Dashboard labels change from time to time. If a label doesn't match, tell the user what to look for ("the page that lists your API keys") rather than inventing a path.
 

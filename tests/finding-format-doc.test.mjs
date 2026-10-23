@@ -21,7 +21,7 @@ test('the doc names the canonical findings path, not the old one', () => {
 });
 
 test('git-history evidence with a commit field is valid', () => {
-  const ev = doc.match(/`(\{ "file": "\.env\.local", "line": 1, "commit": "[0-9a-f]+" \})`/)[1];
+  const ev = doc.match(/`(\{ "file": "[^"]+", "line": \d+, "commit": "[0-9a-f]+" \})`/)[1];
   const f = JSON.parse(doc.match(/## Example\s+```json\n([\s\S]*?)```/)[1]);
   assert.deepEqual(validateFinding({ ...f, evidence: [JSON.parse(ev)] }), []);
 });

@@ -3,7 +3,9 @@ import { join } from 'node:path';
 import { isMain } from './is-main.mjs';
 
 const IGNORE_LINE = '.vibe-secure/';
+// rotations.json is never deleted: it records keys the user still has to rotate, or has confirmed (R18).
 const STALE_FILES = ['merged.json', 'report.md', 'live-requests.log', 'live-scope.json'];
+const isAreaReport = (f) => /^report-[a-z-]+\.md$/.test(f);
 
 function ensureGitignore(root) {
   const file = join(root, '.gitignore');
@@ -24,6 +26,9 @@ export function initWorkspace(root, { full = false } = {}) {
       if (f.endsWith('.json')) rmSync(join(findings, f), { force: true });
     }
     for (const f of STALE_FILES) rmSync(join(ws, f), { force: true });
+    for (const f of readdirSync(ws)) {
+      if (isAreaReport(f)) rmSync(join(ws, f), { force: true });
+    }
   }
 }
 

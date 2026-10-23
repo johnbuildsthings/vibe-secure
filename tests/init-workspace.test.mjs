@@ -62,3 +62,21 @@ test('non-full keeps existing results', () => {
   assert.ok(existsSync(join(ws, 'findings', 'secrets.json')));
   assert.ok(existsSync(join(ws, 'report.md')));
 });
+
+test('rotations.json survives both full and non-full init (R18)', () => {
+  for (const full of [true, false]) {
+    const root = tmp();
+    const ws = seed(root);
+    writeFileSync(join(ws, 'rotations.json'), '{"rotations":[]}');
+    initWorkspace(root, { full });
+    assert.equal(readFileSync(join(ws, 'rotations.json'), 'utf8'), '{"rotations":[]}', `full=${full}`);
+  }
+});
+
+test('full also removes stale single-area reports', () => {
+  const root = tmp();
+  const ws = seed(root);
+  writeFileSync(join(ws, 'report-secrets.md'), 'x');
+  initWorkspace(root, { full: true });
+  assert.ok(!existsSync(join(ws, 'report-secrets.md')));
+});

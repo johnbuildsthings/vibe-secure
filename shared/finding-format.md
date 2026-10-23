@@ -37,7 +37,7 @@ Either `{ "file": "path", "line": 12 }` or `{ "url": "https://...", "status": 20
 
 File paths are relative to the project root.
 
-Evidence found in git history (`secrets.key-in-git-history`) adds an optional `commit` field with the short hash of the commit holding that file and line: `{ "file": ".env.local", "line": 1, "commit": "635c9ad" }`. The file may no longer exist in the current tree.
+Evidence found in git history (`secrets.key-in-git-history`) adds an optional `commit` field with the short hash of the commit holding that file and line: `{ "file": "config/payments.env", "line": 2, "commit": "abc1234" }`. The file may no longer exist in the current tree.
 
 ## Rules
 
