@@ -252,27 +252,18 @@ switch (event.type) {                                             // grant only 
 }
 ```
 
-The same applies to Payment Links and the Pricing Table: they also end in `checkout.session.completed`, so map the bought price to what you grant.
+When the checkout uses Stripe price ids, check what was bought instead of metadata: `const { data } = await stripe.checkout.sessions.listLineItems(session.id); const priceIds = data.map((l) => l.price.id);` and map each allowed price id to its plan. The same applies to Payment Links and the Pricing Table: they also end in `checkout.session.completed`, so map the bought price to what you grant.
 
 ### Credits and other grants that add up
 
-Setting `plan = 'pro'` twice is harmless; adding 100 credits twice is not. Record the checkout session (or event) id as used, with a unique constraint, and grant only when that insert succeeds:
+Setting `plan = 'pro'` twice is harmless; adding 100 credits twice is not. Record the checkout session id as used, with a unique constraint, in the same database step that adds the credits:
 
 ```sql
 create table fulfilled_checkouts (session_id text primary key, account_id uuid not null, created_at timestamptz default now());
-```
+-- Only the service role and grant_credits_once use this table: RLS on with no policies,
+-- so the public anon key can neither read it nor pre-insert session ids to block other buyers' grants.
+alter table fulfilled_checkouts enable row level security;
 
-```js
-async function grantCredits(session, credits) {
-  const { error } = await admin.from('fulfilled_checkouts').insert({ session_id: session.id, account_id: session.client_reference_id });
-  if (error) return;                                               // already granted (unique violation): do nothing
-  await admin.rpc('add_credits', { account: session.client_reference_id, amount: credits });
-}
-```
-
-Safer still, do both in one database function so a crash between the two steps can't lose the grant:
-
-```sql
 create function grant_credits_once(p_session text, p_account uuid, p_amount int) returns boolean
 language plpgsql security definer set search_path = public as $$
 begin
@@ -280,26 +271,61 @@ begin
   update accounts set credits = credits + p_amount where id = p_account;
   return true;
 exception when unique_violation then
-  return false;
+  return false;                                                    -- already granted: do nothing
 end $$;
 revoke execute on function grant_credits_once(text, uuid, int) from public, anon, authenticated;
 ```
 
+```js
+async function grantCredits(session, credits) {
+  const { error } = await admin.rpc('grant_credits_once', {
+    p_session: session.id, p_account: session.client_reference_id, p_amount: credits,
+  });
+  if (error) throw error;              // a real failure: the webhook returns 500 and Stripe retries
+}
+```
+
+If the app can't add a database function, insert into `fulfilled_checkouts` first and add the credits only when the insert succeeded. Treat only a unique violation as "already granted" (`if (error?.code === '23505') return; if (error) throw error;`); swallowing every error would skip the grant and stop Stripe from retrying.
+
 Call it only from server code with the admin client. The success page and the webhook can both call it: whichever runs first grants, the other does nothing.
 
 ### Subscriptions: grant and revoke from the subscription's status
+
+At checkout, put the account id on the subscription from the verified session, so every later subscription event can find the account even if it arrives before `checkout.session.completed`:
+
+```js
+await stripe.checkout.sessions.create({
+  mode: 'subscription',
+  client_reference_id: user.id,
+  subscription_data: { metadata: { account_id: user.id } },        // server-set, never from the request
+  line_items: [{ price: priceId, quantity: 1 }],                   // priceId checked against the allowlist
+  /* … */
+});
+```
 
 ```js
 const PLAN_BY_PRICE = { [process.env.STRIPE_PRICE_PRO_MONTHLY]: 'pro', [process.env.STRIPE_PRICE_PRO_YEARLY]: 'pro' };
 
 async function syncSubscription(subscriptionId) {
   const sub = await stripe.subscriptions.retrieve(subscriptionId);   // fresh copy: events can arrive out of order
+  const accountId = sub.metadata?.account_id;
+  if (!accountId) throw new Error(`Subscription ${sub.id} has no account_id`); // Stripe retries; investigate
   const active = sub.status === 'active' || sub.status === 'trialing';
   const plan = active ? PLAN_BY_PRICE[sub.items.data[0]?.price.id] ?? 'free' : 'free';
-  await admin.from('accounts').update({ plan, subscription_status: sub.status }).eq('stripe_customer_id', sub.customer);
+  await admin.from('accounts')
+    .update({ plan, subscription_status: sub.status, stripe_customer_id: sub.customer })
+    .eq('id', accountId);
 }
 
 switch (event.type) {
+  case 'checkout.session.completed': {
+    const session = event.data.object;
+    if (session.mode === 'subscription' && session.subscription) {
+      await admin.from('accounts').update({ stripe_customer_id: session.customer }).eq('id', session.client_reference_id);
+      await syncSubscription(session.subscription);
+    }
+    break;
+  }
   case 'customer.subscription.created':
   case 'customer.subscription.updated':
   case 'customer.subscription.deleted':
@@ -315,7 +341,7 @@ switch (event.type) {
 }
 ```
 
-`past_due` keeps access off here; if the app wants a grace period, allow `past_due` explicitly and say so. Add these events to the endpoint in Stripe (Developers → Webhooks → the endpoint → Select events).
+`past_due` keeps access off here; if the app deliberately allows a grace period, allow `past_due` explicitly and say so. Add these events to the endpoint in Stripe (Developers → Webhooks → the endpoint → Select events).
 
 ### Stripe customer ids come from your records
 
@@ -328,8 +354,6 @@ const portal = await stripe.billingPortal.sessions.create({ customer: account.st
 ```
 
 Store the customer id when the webhook first sees it (`session.customer` on `checkout.session.completed`), never from the browser.
-
-When the checkout uses Stripe price ids, check what was bought instead of metadata: `const { data } = await stripe.checkout.sessions.listLineItems(session.id); const priceIds = data.map((l) => l.price.id);` and map each allowed price id to its plan. For subscriptions, set and revoke the plan from `customer.subscription.created/updated/deleted` using `subscription.status` (`active`, `trialing`) and the subscription item's `price.id`.
 
 ### Success page that checks with Stripe
 
