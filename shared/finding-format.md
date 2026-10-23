@@ -51,18 +51,18 @@ Evidence found in git history (`secrets.key-in-git-history`) adds an optional `c
 {
   "id": "database-rules-1",
   "check": "db.rls-disabled",
-  "subject": "profiles",
+  "subject": "orders",
   "area": "database-rules",
   "owasp": "A01:2025 Broken Access Control",
   "severity": "critical",
-  "title": "Anyone on the internet can read your users' profiles",
-  "impact": "Row level security is off for the profiles table, so a stranger with your public key can list or change every user's profile.",
+  "title": "Anyone on the internet can read every customer's orders",
+  "impact": "Row level security is off for the orders table, so a stranger with your public key can list or change every customer's orders.",
   "evidence": [
-    { "file": "supabase/migrations/001_profiles.sql", "line": 8 },
-    { "url": "https://xyz.supabase.co/rest/v1/profiles?select=*&limit=1", "status": 200, "summary": "Returned a row with no login; 1204 rows in total" }
+    { "file": "db/migrations/20250301_create_orders.sql", "line": 12 },
+    { "url": "https://xyz.supabase.co/rest/v1/orders?select=*&limit=1", "status": 200, "summary": "Returned a row with no login; 87 rows in total" }
   ],
-  "fix_plan": "Turn on row level security for profiles and add a policy so each user can only read and edit their own row.",
-  "fix_risk": { "level": "low", "may_break": "Pages that read other users' profiles will stop showing them until a policy allows it." },
+  "fix_plan": "Turn on row level security for orders and add a policy so each customer can only read their own orders.",
+  "fix_risk": { "level": "low", "may_break": "Admin pages that list everyone's orders will stop showing them until a policy allows it." },
   "manual_steps": [],
   "status": "open"
 }

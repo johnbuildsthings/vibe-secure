@@ -11,8 +11,22 @@ test('maskSecret hides short strings entirely', () => {
   assert.equal(maskSecret('elevenchars'), '••••');
 });
 
-test('maskSecret prefix is floor(len/3) for mid-length strings', () => {
-  assert.equal(maskSecret('abcdefghijkl'), 'abcd…kl');
+test('maskSecret without a recognized prefix shows only 2 + 2 chars (R21)', () => {
+  assert.equal(maskSecret('abcdefghijkl'), 'ab…kl');
+  assert.equal(maskSecret('super-secret-session-value-1234'), 'su…34');
+  assert.equal(maskSecret('postgres://app:hunter2hunter2@db.example.com:5432/app'), 'po…pp');
+});
+
+test('maskSecret keeps a recognized prefix plus 2 chars (R21)', () => {
+  const body = 'Q'.repeat(30) + 'z9';
+  const cases = {
+    sk_live_: 'sk_live_QQ…z9', sk_test_: 'sk_test_QQ…z9', rk_live_: 'rk_live_QQ…z9',
+    'sk-proj-': 'sk-proj-QQ…z9', 'sk-ant-': 'sk-ant-QQ…z9', 'sk-': 'sk-QQ…z9',
+    AIza: 'AIzaQQ…z9', AKIA: 'AKIAQQ…z9', ASIA: 'ASIAQQ…z9', eyJ: 'eyJQQ…z9',
+    ghp_: 'ghp_QQ…z9', github_pat_: 'github_pat_QQ…z9', 'xoxb-': 'xoxb-QQ…z9',
+    'xoxp-': 'xoxp-QQ…z9', 'SG.': 'SG.QQ…z9',
+  };
+  for (const [prefix, want] of Object.entries(cases)) assert.equal(maskSecret(prefix + body), want, prefix);
 });
 
 test('maskText masks emails and Stripe keys', () => {

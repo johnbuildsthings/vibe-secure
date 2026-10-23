@@ -69,7 +69,7 @@ Every rotation ends the same way:
 
 ## Other secrets
 
-- **Session or signing secrets** (`SECRET_KEY`, `NEXTAUTH_SECRET`, `AUTH_SECRET`, `JWT_SECRET`): generate a new random value with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` or `python3 -c "import secrets; print(secrets.token_hex(32))"`, put it in the server-only variable on your host and in `.env.local`, then redeploy. Everyone gets signed out once.
+- **Session or signing secrets** (the Django or Flask secret-key setting, `NEXTAUTH_SECRET`, `AUTH_SECRET`, `JWT_SECRET`): generate a new random value with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` or `python3 -c "import secrets; print(secrets.token_hex(32))"`, put it in the server-only variable on your host and in `.env.local`, then redeploy. Everyone gets signed out once.
 - **Any other provider** (Resend, SendGrid, GitHub, Slack, Twilio): open that provider's API keys or tokens page, revoke the key with the masked ending, create a new one, then do the common steps.
 
 ## Optional: purge the key from git history

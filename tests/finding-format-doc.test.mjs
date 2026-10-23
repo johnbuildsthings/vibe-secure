@@ -13,6 +13,9 @@ test('the example finding is valid and uses canonical names', () => {
   assert.equal(f.area, 'database-rules');
   assert.equal(f.id, 'database-rules-1');
   assert.match(f.owasp, /^A01:2025/);
+  // R21: neutral example values, never a fixture's expected answers.
+  assert.equal(f.subject, 'orders');
+  assert.ok(!JSON.stringify(f).includes('profiles'));
 });
 
 test('the doc names the canonical findings path, not the old one', () => {

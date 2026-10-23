@@ -63,13 +63,15 @@ To read a JWT's role without printing the key: `node -e "console.log(JSON.parse(
 
 **Can't tell?** An `AIza…` key that might be Firebase, Maps or Gemini, or an unknown token with no telling name: write it as `severity: "unverified"` under the check that fits, with one sentence on what the user should check. Never guess `critical`.
 
-**Masking:** mask every value with `maskSecret` before it goes into any field or reply: `node -e "import('<root>/scripts/mask.mjs').then(m=>process.argv.slice(1).forEach(k=>console.log(m.maskSecret(k))))" '<value>'`. For a private key, mask the first line of the key body (the line after `BEGIN`), or the `private_key_id` of a service-account file. The same value always masks the same way, which is how `rotations.json` recognises a key across audits.
+**Masking and fingerprints:** mask every value before it goes into any field or reply. This command prints the masked value and its fingerprint (the first 12 hex characters of its SHA-256) for each value:
+`node -e "import('<root>/scripts/mask.mjs').then(m=>process.argv.slice(1).forEach(k=>console.log(m.maskSecret(k), require('crypto').createHash('sha256').update(k).digest('hex').slice(0,12))))" '<value>'`
+The masked value (`sk_live_4f…a9`) is for display. The fingerprint is how `rotations.json` recognises the same key across audits, because different keys can mask alike. Never write a raw value anywhere. For a private key, use the first line of the key body (the line after `BEGIN`), or the `private_key_id` of a service-account file, as the value to mask and fingerprint.
 
 ## Checks
 
 ### 1. `secrets.server-key-in-client`: a secret key reaches the browser
 
-**Subject:** the env var name (for example `VITE_STRIPE_SECRET_KEY`). For a literal written in browser code, the variable or property that holds it (`apiKey`, `OPENAI_KEY`).
+**Subject:** the env var name (for example `VITE_MAILGUN_API_KEY`). For a literal written in browser code, the variable or property that holds it (`apiKey`, `OPENAI_KEY`).
 **OWASP:** `A04:2025 Cryptographic Failures`. **fix_risk:** `high` when a browser call has to move to the server, which is the usual case; `low` when only a variable needs renaming or a config line removing because every use is already server-side.
 **`impact`** names the masked key, so the rotation rules can match it.
 
@@ -97,7 +99,7 @@ To read a JWT's role without printing the key: `node -e "console.log(JSON.parse(
 
 **Severity:** `critical`. A Stripe `sk_test_`/`rk_test_` key → `high`. In Next.js, when every read of the `NEXT_PUBLIC_` secret is in server-only code (Next only inlines the variable into browser code that reads it) → `high`, and say in `impact` that one import from a client file would leak it.
 
-**Status:** `open`. Add the provider's rotation steps (from `references/rotation-steps.md`) to `manual_steps`, because a key that was ever deployed in the bundle is already public. The rotation itself is tracked by the rotation rules (check 5). When the code fix verifies `GONE`, this finding becomes `fixed`, and the rotation reminder carries on as `secrets.leaked-key-unrotated`.
+**Status:** `open`. Add the provider's rotation steps (from `references/rotation-steps.md`) to `manual_steps`, because a key that was ever deployed in the bundle is already public. The rotation itself is tracked by the rotation rules (check 5). When the code fix verifies `GONE`, this finding becomes `fixed`, and in the same step the fix loop adds the `secrets.leaked-key-unrotated` reminder built from the key's rotation entry (rotation rule 6), so the reminder stays in this session's report and to-do list.
 
 ### 2. `secrets.hardcoded-key`: a secret is written into the code
 
@@ -107,7 +109,7 @@ To read a JWT's role without printing the key: `node -e "console.log(JSON.parse(
 **Find it:** in server and shared code (anything not covered by check 1), look for:
 
 - string literals in the secret formats above;
-- string literals assigned to secret-named variables, fields or config keys (`SECRET_KEY = "…"` in settings files, `app.config["…SECRET…"] = "…"`, `password: "…"`, `client_secret`, `Authorization: "Bearer …"`, `new Stripe("sk_…")`, `new OpenAI({ apiKey: "sk-…" })`);
+- string literals assigned to secret-named variables, fields or config keys (`…SECRET…` or `…_KEY` settings in a Django `settings.py` or a Flask `app.config[…]`, `password: "…"`, `client_secret`, `Authorization: "Bearer …"`, `new Stripe("sk_…")`, `new OpenAI({ apiKey: "sk-…" })`);
 - `-----BEGIN … PRIVATE KEY-----` blocks in any file;
 - tracked service-account files: `git ls-files '*service*account*.json' '*service-account*.json' '*firebase-adminsdk*.json'`, then read each one to confirm it holds `"type": "service_account"` and a `private_key`;
 - database URLs with a real password in code or config files;
@@ -173,19 +175,21 @@ and `<excludes>` with `-- . ':(exclude,glob)**/package-lock.json' ':(exclude,glo
 
 ### 5. `secrets.leaked-key-unrotated`: a key that leaked earlier still isn't rotated
 
-This check never comes from scanning. It is raised only from `.vibe-secure/rotations.json`, when the code no longer shows a leaked key that the user hasn't confirmed rotating (for example after its browser use was moved to the server). Moving or deleting a key doesn't make an already-leaked key safe.
+This check never comes from scanning. It is raised only from `.vibe-secure/rotations.json`: by an audit, when no key found in this run has the entry's fingerprint; or by the fix loop, when the code fix for a leaked key verifies `GONE` (rotation rule 6). Moving or deleting a key doesn't make an already-leaked key safe.
 
 **Subject:** the masked key. **OWASP:** `A04:2025 Cryptographic Failures`. **Severity:** the severity stored in its rotation entry. **Status:** `awaiting-user`. **Evidence:** the stored evidence. **impact** starts "Found by an earlier check on <first_seen date>. The code no longer shows it, but the old key keeps working until you rotate it." `fix_plan`, `fix_risk` and `manual_steps` as in check 4.
 
 ## Rotation rules (`.vibe-secure/rotations.json`)
 
-This file remembers leaked keys across audits, including `--full` ones. The shape and the general rules are in `<root>/shared/area-skill-template.md` ("Rotations"). For this skill:
+This file remembers leaked keys across audits, including `--full` ones. The shape and the general rules are in `<root>/shared/area-skill-template.md` ("Rotations"). Entries are matched on `check` + `fingerprint`; the masked `subject` is only for display. For this skill:
 
-1. **Which keys need rotation:** every `secrets.key-in-git-history` finding (entry check `secrets.key-in-git-history`, subject its masked key), and every key that leaked through check 1, or through check 2 in a tracked file, that this run does **not** also report under `secrets.key-in-git-history` (entry check `secrets.leaked-key-unrotated`, subject the masked key).
-2. **Confirmed entry** (`status: "confirmed"`) with the same check and subject → set that finding's `status` to `fixed`. For check 1 or 2 findings, the code problem itself stays `open` until the code is fixed. Only the rotation is done.
+1. **Which keys need rotation:** every `secrets.key-in-git-history` finding (entry check `secrets.key-in-git-history`), and every key that leaked through check 1, or through check 2 in a tracked file, that this run does **not** also report under `secrets.key-in-git-history` (entry check `secrets.leaked-key-unrotated`). Each entry stores the key's fingerprint, its masked value as `subject`, the finding's severity and its evidence.
+2. **Confirmed entry** with the same `check` + `fingerprint` → set that `key-in-git-history` finding's `status` to `fixed`. For a check 1 or 2 key with a confirmed entry, only the rotation is done: the code finding stays `open` until the code is fixed.
 3. **Awaiting entry** → `key-in-git-history` findings get `awaiting-user`. Add an entry for any key that has none yet, with `first_seen` set to now.
-4. **Awaiting entry that this run didn't match:** no finding this run names that masked key (a `key-in-git-history` subject, or the `impact` of a check 1 or 2 finding). Re-raise it as its own finding with the entry's check, subject, severity and evidence, `status: "awaiting-user"`.
-5. Audit mode writes `rotations.json` back with entries added, never removed. Verify mode doesn't touch it.
+4. **Awaiting entry whose fingerprint matches no key found in this run** → re-raise it as its own finding with the entry's check, subject, severity and evidence, `status: "awaiting-user"`.
+5. **The user confirms a rotation** (fix loop): set the entry's `status` to `confirmed` and `confirmed_at` to now, and set the finding with the same `check` + `subject` as the entry to `fixed`.
+6. **A check 1 or 2 finding turns `fixed` in the fix loop** while its key's entry is `awaiting-user` → add the `secrets.leaked-key-unrotated` finding built from the entry to `.vibe-secure/findings/secrets.json` right away, then re-validate and re-run `merge-findings`.
+7. Audit mode writes `rotations.json` back with entries added, never removed. Verify mode doesn't touch it.
 
 ## Fixes
 

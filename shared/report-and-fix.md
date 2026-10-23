@@ -54,14 +54,14 @@ Your Supabase "service_role" key (an admin password for your database) is
 exposed to the browser: vite.config.ts copies it into the JavaScript every
 visitor downloads. With it, a stranger can read, change or delete every row,
 ignoring all your security rules.
-  Proof: .env.production:5 (SUPABASE_SERVICE_KEY = eyJhbGciOi…Qk)
+  Proof: .env.production:5 (SUPABASE_SERVICE_KEY = eyJhb…Qk)
          vite.config.ts:14 (define exposes it to browser code)
-         src/api/admin.ts:3 (browser code uses it)
+         src/api/users.ts:3 (browser code uses it)
   Category: OWASP A04:2025 Cryptographic Failures
-  Fix: Use the public anon key in the browser. Move admin work into a
+  Fix: Use the public anon key in the browser. Move privileged work into a
        Supabase Edge Function that reads the service key on the server.
-  Risk: Needs care: the admin screens stop working until their calls go
-        through the new function.
+  Risk: Needs care: the user-management screens stop working until their
+        calls go through the new function.
   You must also: rotate the key (steps below). The old one is already public.
 
 CRITICAL: A live Stripe key is still readable in your git history
@@ -102,10 +102,10 @@ Skip this whole section if the user asked for a report only ("report only", "don
    - an area skill run alone runs its own `verify <check> <subject>` mode;
    - if the finding's evidence includes a URL, also re-probe it with `<root>/scripts/safe-fetch.mjs`.
 
-   Mark it `fixed` only if the check replies `GONE`. If it replies `PRESENT`, say so, show the new evidence, and either try once more or leave it `open` and explain why.
+   Mark it `fixed` only if the check replies `GONE`. If that finding's key has an `awaiting-user` entry in `.vibe-secure/rotations.json` (matched by fingerprint), add the rotation reminder finding built from the entry (`secrets.leaked-key-unrotated`, or the entry's check) to the area's findings file in the same step, so the reminder stays visible this session. See "Rotations" rule 6 in `<root>/shared/area-skill-template.md`. If it replies `PRESENT`, say so, show the new evidence, and either try once more or leave it `open` and explain why.
    Record status changes in the owning area's file (`.vibe-secure/findings/<area>.json`): edit only the `status` field, re-run `validate-findings` on that file, then re-run `merge-findings`. If the user declines a fix, set it to `skipped`.
 6. **Manual steps** (rotate a leaked key, purge git history, change a dashboard-only setting) are given as numbered, click-by-click instructions from the area skill's references. A leaked key stays `awaiting-user` until the user tells you they rotated that key. Approving fixes is not the same as confirming a rotation, and a code change never un-leaks a key. Never mark a rotation `fixed` on your own.
-   **When the user confirms a rotation** (naming the key, or "I rotated all of them"): in `.vibe-secure/rotations.json` set that entry's `status` to `confirmed` and `confirmed_at` to the current time (`node -e "console.log(new Date().toISOString())"`); set the matching finding's `status` to `fixed` in the area's findings file; validate; re-run `merge-findings`. The entry is what keeps the confirmation across later audits, including `--full` ones. The contract is in `<root>/shared/area-skill-template.md` ("Rotations").
-7. **Final summary:** what was fixed (with how it was verified), what is still open or skipped and why, and the user's manual to-do list (each `awaiting-user` item with its steps). Update the saved report file to match.
+   **When the user confirms a rotation** (naming the key, or "I rotated all of them"): in `.vibe-secure/rotations.json` set that entry's `status` to `confirmed` and `confirmed_at` to the current time (`node -e "console.log(new Date().toISOString())"`); set the finding with the same `check` + `subject` as the entry to `fixed` in the area's findings file; validate; re-run `merge-findings`. The entry is what keeps the confirmation across later audits, including `--full` ones. The contract is in `<root>/shared/area-skill-template.md` ("Rotations").
+7. **Final summary:** what was fixed (with how it was verified), what is still open or skipped and why, and the user's manual to-do list: each `awaiting-user` finding with its steps, **plus every `awaiting-user` entry in `.vibe-secure/rotations.json`** (listed by its masked `subject`), even if no finding shows it right now. Update the saved report file to match.
 
 Throughout the loop: don't commit, push or deploy unless the user asks. Don't touch `.vibe-secure/` files other than the `status` fields and the files the scripts write.

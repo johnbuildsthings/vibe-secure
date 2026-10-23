@@ -1,11 +1,16 @@
 import { SECRET_PATTERNS } from './validate-findings.mjs';
 
-// Keeps the first min(10, floor(len/3)) chars and the last 2. Short strings are hidden entirely.
+// Longest first, so `sk-proj-` wins over `sk-`.
+const KNOWN_PREFIXES = ['github_pat_', 'sk_live_', 'sk_test_', 'rk_live_', 'sk-proj-', 'sk-ant-', 'xoxb-', 'xoxp-', 'ghp_', 'AIza', 'AKIA', 'ASIA', 'sk-', 'eyJ', 'SG.'];
+
+// Keeps a recognized key prefix plus 2 chars (otherwise only the first 2 chars), then `…` and the
+// last 2, so a secret without a known prefix shows at most 4 of its characters. Strings shorter
+// than 12 are hidden entirely.
 export function maskSecret(s) {
   const str = String(s);
   if (str.length < 12) return '••••';
-  const keep = Math.min(10, Math.floor(str.length / 3));
-  return `${str.slice(0, keep)}…${str.slice(-2)}`;
+  const prefix = KNOWN_PREFIXES.find((p) => str.startsWith(p)) ?? '';
+  return `${str.slice(0, prefix.length + 2)}…${str.slice(-2)}`;
 }
 
 const globalCopy = (r) => new RegExp(r.source, r.flags.includes('g') ? r.flags : r.flags + 'g');

@@ -96,23 +96,24 @@ Some findings can only be fixed by the user, outside the code: above all, rotati
 
 ```json
 { "rotations": [
-  { "check": "secrets.key-in-git-history", "subject": "sk_live_4f…a9", "severity": "critical",
+  { "check": "secrets.key-in-git-history", "fingerprint": "48e65b779a33", "subject": "sk_live_4f…a9", "severity": "critical",
     "evidence": [{ "file": "config/payments.env", "line": 2, "commit": "abc1234" }],
     "status": "awaiting-user", "first_seen": "2025-03-14T10:02:11.000Z" },
-  { "check": "secrets.leaked-key-unrotated", "subject": "eyJhbGciOi…Qk", "severity": "critical",
-    "evidence": [{ "file": "src/lib/admin.ts", "line": 4 }],
+  { "check": "secrets.leaked-key-unrotated", "fingerprint": "9f2c41d07be3", "subject": "eyJhb…Qk", "severity": "critical",
+    "evidence": [{ "file": "src/lib/db.ts", "line": 4 }],
     "status": "confirmed", "first_seen": "2025-03-14T10:02:11.000Z", "confirmed_at": "2025-03-15T08:30:00.000Z" }
 ] }
 ```
 
-`check` + `subject` identify an entry; `subject` is always masked (`maskSecret` is deterministic, so the same key matches across audits). `evidence` is stored as first found. A skill that owns rotation findings (today: `check-secrets`) follows these rules:
+`check` + `fingerprint` identify an entry. `fingerprint` is the first 12 hex characters of the SHA-256 of the raw key, computed in memory with `node -e` (see the skill's masking command) and never written raw. `subject` is the masked key, for display only: two different keys can mask the same way, so never match on it. `evidence` is stored as first found. A skill that owns rotation findings (today: `check-secrets`) follows these rules:
 
 1. **Audit, read:** read the file if it exists. A missing file means no entries. Only touch entries whose `check` belongs to your area.
-2. **Audit, raise:** when you raise a finding that needs a rotation, look up its entry. `confirmed` → the finding's status is `fixed` (it stays listed, under "already fixed"). `awaiting-user` or no entry → status `awaiting-user`; add the entry if it's missing (`status: "awaiting-user"`, `first_seen` = now).
-3. **Audit, re-raise:** an `awaiting-user` entry that no finding of this run covers (because the code evidence is gone) is raised again as a finding built from the entry: same check, subject, severity and stored evidence, `status: "awaiting-user"`, and an `impact` saying it was found by an earlier check and still needs rotating.
+2. **Audit, raise:** when you raise a finding that needs a rotation, compute the key's fingerprint and look up the entry with the same `check` + `fingerprint`. `confirmed` → the finding's status is `fixed` (it stays listed, under "already fixed"). `awaiting-user` or no entry → status `awaiting-user`; add the entry if it's missing (`status: "awaiting-user"`, `first_seen` = now).
+3. **Audit, re-raise:** an `awaiting-user` entry whose fingerprint matches no key found in this run (because the code evidence is gone) is raised again as a finding built from the entry: same check, subject, severity and stored evidence, `status: "awaiting-user"`, and an `impact` saying it was found by an earlier check and still needs rotating.
 4. **Audit, write:** write the file back. Entries are added or updated, never removed.
-5. **Confirm (fix loop only):** when the user says they rotated a specific key (or "all of them"), set that entry's `status` to `confirmed` and `confirmed_at` to now, and set the matching finding to `fixed`. Nothing else confirms a rotation: not approving fixes, not a code change, not a history purge.
-6. **Verify mode** never reads or writes this file.
+5. **Confirm (fix loop only):** when the user says they rotated a specific key (or "all of them"), set that entry's `status` to `confirmed` and `confirmed_at` to now, and set the finding with the same `check` + `subject` as the entry to `fixed`. Nothing else confirms a rotation: not approving fixes, not a code change, not a history purge.
+6. **Code fixed, key not rotated (fix loop):** when a finding whose key has an `awaiting-user` entry turns `fixed` because its code evidence is gone (for example a browser leak moved to the server), add a finding built from the entry to the area's findings file right away (the entry's check, subject, severity and evidence, `status: "awaiting-user"`), re-validate and re-merge. The reminder then shows in this session's report and to-do list, not only at the next audit.
+7. **Verify mode** never reads or writes this file.
 
 ### Subject conventions
 
@@ -120,13 +121,13 @@ The `subject` names the thing affected. Merge removes duplicates by `check` + `s
 
 | Finding kind | Subject | Example |
 |---|---|---|
-| A key or secret in the current code or env files | the env var or identifier name that holds it | `VITE_STRIPE_SECRET_KEY`, `JWT_SECRET` |
+| A key or secret in the current code or env files | the env var or identifier name that holds it | `VITE_MAILGUN_API_KEY`, `JWT_SECRET` |
 | A key found in git history, or a leaked key still waiting for rotation | the masked key | `sk_live_4f…a9` |
 | An env or secrets file problem | the file name, with its path from the project root if not at the root | `.env.production`, `apps/web/.env.local` |
 | `inj.xss-html` | the sink name | `dangerouslySetInnerHTML`, `v-html`, `innerHTML` |
 | Other injection in a function or tool | the function or tool name | `find_user`, `query_db` |
 | `ai.client-side-llm-call` | the provider name | `openai`, `anthropic`, `google` |
-| A route or page | the route path as users call it | `/api/checkout`, `/api/billing/webhook`, `/dashboard/admin` |
+| A route or page | the route path as users call it | `/api/orders`, `/api/billing/webhook`, `/settings/team` |
 | A database table or collection | the table or collection name | `orders` |
 | A rules or config file | the file name | `firestore.rules`, `vite.config` |
 | A dependency | the package name | `minimist` |
