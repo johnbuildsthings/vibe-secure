@@ -18,10 +18,24 @@ export async function createClient() {
   return createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
     cookies: {
       getAll: () => cookieStore.getAll(),
-      setAll: (list) => list.forEach(({ name, value, options }) => cookieStore.set(name, value, options)),
+      setAll: (list) => {
+        try {
+          list.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
+        } catch {
+          // Called from a Server Component, which can't set cookies. Safe to ignore
+          // because middleware refreshes the session on every request.
+        }
+      },
     },
   });
 }
+```
+
+Server component (a page that shows private data):
+
+```ts
+const { data: { user } } = await (await createClient()).auth.getUser();
+if (!user) redirect('/login'); // redirect from 'next/navigation'
 ```
 
 ```ts
@@ -223,6 +237,15 @@ create policy "admins read all" on public.notes for select
   using ((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin');
 ```
 
+**Role or plan in `user_metadata`:** any signed-in user can change their own `user_metadata` with `supabase.auth.updateUser({ data: { role: 'admin' } })`, so move the value to `app_metadata` with the script above (once per user), then change every read:
+
+- app code: `user.user_metadata.role` → `user.app_metadata.role`;
+- policies and SQL: `auth.jwt() -> 'user_metadata' ->> 'role'` → `auth.jwt() -> 'app_metadata' ->> 'role'`, and `raw_user_meta_data` → `raw_app_meta_data`. Add these as a new migration that drops and recreates the policy.
+
+Clerk: move it from `unsafeMetadata` to `publicMetadata`, set from the server (`clerkClient.users.updateUserMetadata(userId, { publicMetadata: { role: 'admin' } })`), and read `sessionClaims` / `user.publicMetadata`. In Firebase, use custom claims (above).
+
+`manual_steps`: "Run the script once for each admin or paying user so they keep their access; they must sign out and in again."
+
 If the role must stay in a table column, stop users updating it (`check-database-rules`' cookbook has the column-grant and trigger versions):
 
 ```sql
@@ -236,12 +259,24 @@ Every read and action the admin screen uses must check the role on the server; t
 
 ```ts
 // lib/require-admin.ts
+// Returns the admin user, or null. Don't throw a Response: Next.js turns that into a 500.
 export async function requireAdmin() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user || user.app_metadata?.role !== 'admin') throw new Response('Forbidden', { status: 403 });
-  return user;
+  return user && user.app_metadata?.role === 'admin' ? user : null;
 }
+```
+
+```ts
+// route handler
+const admin = await requireAdmin();
+if (!admin) return Response.json({ error: 'Forbidden' }, { status: 403 });
+
+// server action
+if (!(await requireAdmin())) throw new Error('Forbidden');
+
+// admin server page
+if (!(await requireAdmin())) notFound(); // from 'next/navigation'
 ```
 
 Call it at the top of every admin route handler, server action and admin server page. For a browser-only Firebase app, the admin rules above (`isAdmin()` on the collections the admin screen reads and deletes) are the server check. For Supabase, the admin policy above.
@@ -254,18 +289,27 @@ Upstash (works on Vercel and other serverless hosts):
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 
-const limiter = new Ratelimit({ redis: Redis.fromEnv(), limiter: Ratelimit.slidingWindow(5, '10 m') });
+// Two limits: one per account stops guessing one person's password from many IPs;
+// one per IP stops one machine trying many accounts.
+const redis = Redis.fromEnv();
+const perAccount = new Ratelimit({ redis, prefix: 'login-account', limiter: Ratelimit.slidingWindow(5, '10 m') });
+const perIp = new Ratelimit({ redis, prefix: 'login-ip', limiter: Ratelimit.slidingWindow(20, '10 m') });
 
 export async function POST(req: Request) {
   const { email, password } = await req.json();
-  const ip = req.headers.get('x-forwarded-for')?.split(',')[0] ?? 'unknown';
-  const { success } = await limiter.limit(`login:${ip}:${String(email).toLowerCase()}`);
-  if (!success) return Response.json({ error: 'Too many attempts. Try again in a few minutes.' }, { status: 429 });
+  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
+  const [account, machine] = await Promise.all([
+    perAccount.limit(String(email).toLowerCase()),
+    perIp.limit(ip),
+  ]);
+  if (!account.success || !machine.success) {
+    return Response.json({ error: 'Too many attempts. Try again in a few minutes.' }, { status: 429 });
+  }
   // ... check the password
 }
 ```
 
-Express: `app.post('/api/login', rateLimit({ windowMs: 10 * 60 * 1000, limit: 5 }), loginHandler)` with `express-rate-limit`. Flask: `@limiter.limit("5 per 10 minutes")` with Flask-Limiter.
+Express (`express-rate-limit`): two limiters on the login route, one keyed by IP (the default) and one with `keyGenerator: (req) => String(req.body.email).toLowerCase()`. Flask-Limiter: `@limiter.limit("20 per 10 minutes")` plus `@limiter.limit("5 per 10 minutes", key_func=lambda: request.json["email"].lower())`.
 
 `manual_steps` for Upstash: "Create a free Redis database at console.upstash.com, then add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN to your host's environment variables." `may_break`: "Someone who mistypes their password more than 5 times in 10 minutes has to wait."
 
@@ -288,5 +332,7 @@ cookies().set('session', token, {
 Express: `res.cookie('session', token, { httpOnly: true, secure: true, sameSite: 'lax' })`. Flask: `SESSION_COOKIE_HTTPONLY = True`, `SESSION_COOKIE_SECURE = True`, `SESSION_COOKIE_SAMESITE = "Lax"`. Django: `SESSION_COOKIE_SECURE = True`, `CSRF_COOKIE_SECURE = True`.
 
 `may_break` for `secure`: "Login won't stick if you test on plain http on a host other than localhost."
+
+Before adding `httpOnly`, search browser code for reads of that cookie: `document.cookie`, `Cookies.get(` (js-cookie), `universal-cookie`, `useCookies` (react-cookie). If any read it, `httpOnly` makes them get nothing. Set `fix_risk.level: "high"`, name each read with `file:line` in `may_break`, and move what they need behind a server route (for example `/api/me`) in the same change.
 
 Tokens in `localStorage`: have the login route set the token as an `httpOnly` cookie (above) instead of returning it to the page, send requests with `credentials: 'include'`, and read the cookie on the server. Remove every `localStorage.setItem('<key>', token)` and `getItem` use. This is `fix_risk: high`: `may_break` names every place that reads the token from storage (`Authorization` headers built in the browser), which must switch to the cookie in the same change.
