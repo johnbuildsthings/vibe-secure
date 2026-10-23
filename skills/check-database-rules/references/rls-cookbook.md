@@ -57,7 +57,7 @@ A user who may update their own row can otherwise set `role = 'admin'` or `plan 
 
 ```sql
 revoke update on public.accounts from anon, authenticated;
-grant update (display_name, avatar_url, bio) on public.accounts to authenticated;
+grant update (display_name, avatar_url) on public.accounts to authenticated;
 ```
 
 **b. A trigger that rejects changes** (when the list of safe columns changes often):
@@ -102,6 +102,25 @@ A view in `public` runs with its creator's rights and ignores the underlying tab
 create or replace view public.order_summaries with (security_invoker = true) as
   select id, user_id, total from public.orders;
 ```
+
+## 6. Storage buckets and functions
+
+Private user files: make the bucket private and tie each file to the folder named after its owner.
+
+```sql
+update storage.buckets set public = false where id = 'uploads';
+
+create policy "owners read their files" on storage.objects
+  for select to authenticated using (bucket_id = 'uploads' and auth.uid()::text = (storage.foldername(name))[1]);
+create policy "owners upload their files" on storage.objects
+  for insert to authenticated with check (bucket_id = 'uploads' and auth.uid()::text = (storage.foldername(name))[1]);
+create policy "owners delete their files" on storage.objects
+  for delete to authenticated using (bucket_id = 'uploads' and auth.uid()::text = (storage.foldername(name))[1]);
+```
+
+A `security definer` function that the browser doesn't need: `revoke execute on function public.<name> from anon, authenticated, public;`. If the browser does need it, check `auth.uid()` inside it against the rows it touches, or make it `security invoker` so RLS applies.
+
+**May break:** links to files in a bucket that was public stop working; use signed URLs (`createSignedUrl`) instead.
 
 ## Applying a fix
 
