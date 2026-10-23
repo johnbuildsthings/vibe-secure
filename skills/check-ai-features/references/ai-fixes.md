@@ -281,7 +281,7 @@ A limit in the provider's dashboard can't be seen from code and doesn't replace 
 
 ## Check 4: `ai.output-as-html`
 
-The rule: show model output as text. When it must be formatted, render markdown with raw HTML off, or sanitise right before the sink. Never run model-written code, SQL or commands.
+The rule: show model output as text. When it must be formatted, render markdown with raw HTML off, or sanitise the renderer's output. Never run model-written code, SQL or commands. (Model output put straight into `dangerouslySetInnerHTML`, `innerHTML` or an iframe `srcdoc` is `check-injection`'s `inj.xss-html`; its fixes cover those sinks.)
 
 ### React
 
@@ -308,16 +308,6 @@ el.innerHTML = DOMPurify.sanitize(marked.parse(reply));
 ```
 
 For `markdown-it`, keep `html: false` (the default). Vue: `v-html="DOMPurify.sanitize(html)"` or render text with `{{ }}`. Svelte: `{@html DOMPurify.sanitize(html)}` or plain `{reply}`.
-
-### Model-written HTML previews
-
-Show them in an iframe that can't reach your page or your users' login:
-
-```jsx
-<iframe sandbox="allow-scripts" srcDoc={generatedHtml} title="Preview" />
-```
-
-`allow-scripts` without `allow-same-origin` runs the preview's scripts in an isolated origin. Never add both.
 
 ### Model-written code, SQL or shell commands
 
