@@ -4,7 +4,7 @@ Illustrative names (`app.example.com`, `/api/account`). Replace them with the ap
 
 ## `cfg.cors-wildcard-credentials`: allow only your own sites
 
-Ask the user (or read the frontend's deploy config) for the exact addresses that call the API: `https://app.example.com`, `http://localhost:3000` for development. Full origins only: scheme + host + port, no wildcards.
+Ask the user (or read the frontend's deploy config) for the exact addresses that call the API: `https://app.example.com`, `http://localhost:3000` for development. Full origins only: scheme + host + port, no wildcards, and never `'null'`. Also set the session cookie to `SameSite=Lax` (or `Strict`) unless another site really needs it, so a CORS mistake can't reuse it from other sites.
 
 **Next.js route handler or middleware:**
 
@@ -89,6 +89,10 @@ ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",")
 
 **Inverted checks:** compare against the value that means "development", so a missing variable means production: `const showDetails = process.env.NODE_ENV === 'development';`.
 
+**Debug and test routes** that return env variables or config: delete the route. If it's needed for a health check, return only `{ ok: true }`. `manual_steps` when it returned secrets: rotate each one (`check-secrets` has the steps).
+
+**GraphQL:** `introspection: process.env.NODE_ENV !== 'production'` (Apollo's default when the option is left out); load the playground or sandbox plugin only in development (`ApolloServerPluginLandingPageLocalDefault` behind the same check, `graphiql: process.env.NODE_ENV !== 'production'`). `may_break`: tools that read the schema from production (code generators, a public API explorer) need to point at a development server or a schema file.
+
 **Debug consoles and admin UIs** (Prisma Studio, Adminer, phpMyAdmin, a `/debug` route): remove them from the deployed app, or put them behind the app's admin login (see `check-auth`). `manual_steps` if a public one already ran: change the database password.
 
 ## `cfg.debug-in-prod`: error details sent to visitors
@@ -108,7 +112,7 @@ export async function POST(req) {
 }
 ```
 
-For Supabase calls, replace `return Response.json({ error: error.message })` with a log line and a fixed message. Keep messages your own code wrote for the visitor ("Email is required") and Stripe card errors (`err.type === 'card_error'`).
+For Supabase database calls (`.from(…)`, `.rpc(…)`), replace `return Response.json({ error: error.message })` with a log line and a fixed message. Leave Supabase Auth messages (sign-in, sign-up) and zod/yup/joi/valibot validation messages as they are: they're written for users. Keep messages your own code wrote for the visitor ("Email is required") and Stripe card errors (`err.type === 'card_error'`).
 
 **Express error middleware (after all routes):**
 
