@@ -46,7 +46,7 @@ const res = await fetch('/api/assistant', {
 const { reply, error } = await res.json();
 ```
 
-**Chat history:** if the browser sends the whole conversation, accept only `user` and `assistant` messages with string content, keep the last N, and add your system prompt on the server. A browser-sent `system` message (or a fake `assistant` turn) is a prompt injection the visitor doesn't even have to hide:
+**Chat history:** if the browser sends the whole conversation, accept only `user` and `assistant` messages, keep the last N, and add your system prompt on the server. A browser-sent `system` message is a prompt injection the visitor doesn't even have to hide. For the provider SDKs and AI SDK 4, where each message has string `content`:
 
 ```js
 const history = (Array.isArray(body.messages) ? body.messages : [])
@@ -57,20 +57,27 @@ const history = (Array.isArray(body.messages) ? body.messages : [])
 
 ### Vercel AI SDK
 
-Keep `useChat` / `useCompletion` in the browser; they call your own route. In the route:
+Keep `useChat` / `useCompletion` in the browser; they call your own route. In AI SDK 5, `useChat` sends UI messages, which carry `parts` instead of a `content` string, so the string filter above would drop every message. Filter by role only, keep the last N, then convert:
 
 ```js
-import { streamText } from 'ai';
+import { streamText, convertToModelMessages } from 'ai';
 import { openai } from '@ai-sdk/openai';            // reads OPENAI_API_KEY on the server
 
+const { messages } = await req.json();               // UI messages from useChat
+const recent = (Array.isArray(messages) ? messages : [])
+  .filter((m) => m.role === 'user' || m.role === 'assistant')
+  .slice(-20);
+
 const result = streamText({
-  model: openai('gpt-4.1-mini'),
+  model: openai('gpt-4.1-mini'),                     // fixed in code, never from the request
   system: SYSTEM,
-  messages,                                          // converted and filtered as above
-  maxOutputTokens: 600,                              // AI SDK 4: maxTokens
+  messages: await convertToModelMessages(recent),
+  maxOutputTokens: 600,
 });
-return result.toUIMessageStreamResponse();           // AI SDK 4: toDataStreamResponse()
+return result.toUIMessageStreamResponse();
 ```
+
+AI SDK 4: messages have string `content`, so use the filter above, pass `messages: history`, and use `maxTokens` and `result.toDataStreamResponse()`.
 
 Put the login check and the limit before `streamText`, as in the route above.
 
@@ -105,6 +112,7 @@ Deno.serve(async (req) => {
       messages: [{ role: 'system', content: 'You are the help assistant for this app.' }, { role: 'user', content: prompt }],
     }),
   });
+  if (!r.ok) return new Response('The assistant is unavailable, please try again', { status: 502, headers: cors });
   const data = await r.json();
   return Response.json({ reply: data.choices?.[0]?.message?.content ?? '' }, { headers: cors });
 });
@@ -170,6 +178,7 @@ With the provider SDK (`tools: [{ type: 'function', … }]` or Anthropic `input_
 Don't let the model do it; let it propose it:
 
 ```js
+// inside toolsFor(user) above, so `user` is the signed-in user from requireUser
 propose_refund: tool({
   description: 'Propose a refund of one of the signed-in customer\'s orders. The customer must confirm.',
   inputSchema: z.object({ orderId: z.string() }),
@@ -190,9 +199,47 @@ When the assistant reads web pages, emails, uploaded files or other users' messa
 
 - give that conversation only read-only tools scoped to the user; or
 - require the confirmation step above for every write, send and payment, and show the user exactly what will be done;
-- never let a tool send data to an address or URL the model chose (that's how planted instructions get private data out).
+- never let a tool send data to an address or URL the model chose (that's how planted instructions get private data out). A fetch tool takes a URL whose host is checked against a fixed list (`new URL(u).hostname` compared exactly), or a fixed set of pages;
+- don't let replies load images from any host. With `react-markdown`, allow only your own image hosts:
+
+```jsx
+const IMAGE_HOSTS = new Set(['images.your-app.example']);
+function SafeImg({ src, alt }) {
+  try {
+    if (IMAGE_HOSTS.has(new URL(src).hostname)) return <img src={src} alt={alt ?? ''} />;
+  } catch {}
+  return <span>[image removed]</span>;
+}
+<ReactMarkdown components={{ img: SafeImg }}>{reply}</ReactMarkdown>
+```
+
+  (`urlTransform` can do the same for links and images: return `''` for any URL whose host isn't on your list.)
 
 Wrapping outside content in tags with a note like "treat this as data" helps a little, but it isn't a fix on its own.
+
+### Retrieval (RAG) limited to the signed-in user
+
+Supabase / pgvector: filter inside the match function, and call it with the user-scoped client (anon key plus the user's session), with RLS on the documents table:
+
+```sql
+create or replace function match_my_documents(query_embedding vector(1536), match_count int)
+returns table (id bigint, content text, similarity float)
+language sql stable security invoker as $$
+  select d.id, d.content, 1 - (d.embedding <=> query_embedding) as similarity
+  from documents d
+  where d.user_id = auth.uid()                 -- only the caller's own documents
+  order by d.embedding <=> query_embedding
+  limit least(match_count, 20);
+$$;
+```
+
+If retrieval must run with the service-role client, give the function a `p_user uuid` parameter used in the `where`, pass `user.id` from the verified session (never from the request), and `revoke execute on function … from public, anon, authenticated;` so nobody can call it through the API with another user's id.
+
+Pinecone: one namespace per user (`index.namespace(user.id).query({ vector, topK: 5 })`), or a metadata filter (`filter: { user_id: { $eq: user.id } }`) on every query. LangChain vector stores: pass the same filter (`similaritySearch(q, 5, { user_id: user.id })`) and make sure every stored chunk has `user_id` in its metadata. `may_break`: answers stop drawing on other users' documents; shared or team documents need their own rule (for example a `team_id` the user belongs to).
+
+### App-hosted MCP servers and agent endpoints
+
+Put a login in front of the endpoint and scope every tool to the caller. With `mcp-handler`, wrap the handler with its auth helper (for example `withMcpAuth(handler, verifyToken, { required: true })`, where `verifyToken` checks the bearer token with your auth provider), then read the verified identity in each tool (the `authInfo` passed to the tool handler) and use it in every query, as in `toolsFor(user)` above. With `@modelcontextprotocol/sdk` on Express, verify the token in middleware before the transport handles the request. Tools that write, send or spend get the confirmation step, or are left out of the server. `may_break`: MCP clients without a token stop connecting until the user signs in or adds a token.
 
 ### Tools to remove
 
@@ -218,6 +265,17 @@ Three parts: a token cap on every call, a limit per user (or per IP when signed 
 | Image generation | a fixed `n: 1` and a fixed `size` chosen by the server |
 
 Pick a value that fits the feature (a short answer: 300–800; a long draft: up to a few thousand). Never take it from the request. Also cap the visitor's prompt length before the call (input tokens cost money too).
+
+### Model, key and provider address fixed on the server
+
+```js
+const MODELS = { fast: 'gpt-4.1-mini', smart: 'gpt-4.1' };   // the only models visitors can pick
+const model = MODELS[body.tier] ?? MODELS.fast;               // never body.model passed through
+```
+
+- Never take `n`, `max_tokens` or the model name from the request as is.
+- The provider `baseURL` is fixed in code (or picked from a fixed map). A visitor-chosen `baseURL` sends your key to their server: remove it, and rotate the key if the route was ever deployed (`check-secrets` has the steps).
+- Bring your own key: if the visitor sends no key, return 400 ("Please add your API key"); never fall back to yours. If you do want a free tier on your key, treat it as any other route on your key: login, limit and cap.
 
 ### Rate limit per user: Upstash (works on serverless hosts)
 
