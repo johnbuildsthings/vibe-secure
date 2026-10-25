@@ -4,7 +4,7 @@ Used by `deps.suspicious-package`. A dependency whose name is **one edit away** 
 
 Compare the bare name for unscoped packages. For scoped packages (`@scope/name`), compare the whole name; a scope that is one edit away from a known scope (`@supabse/…`, `@type/node`) is also a near-name.
 
-## The list (about 100 of the most-depended-upon and most-installed npm packages)
+## The list (about 140 names: the roughly 100 most-depended-upon and most-installed npm packages, plus the SDKs and tools common in this plugin's target stacks)
 
 Utilities: `lodash`, `underscore`, `async`, `bluebird`, `uuid`, `nanoid`, `moment`, `dayjs`, `date-fns`, `classnames`, `clsx`, `qs`, `ms`, `debug`, `semver`, `minimist`, `yargs`, `commander`, `chalk`, `colors`, `ora`, `inquirer`, `dotenv`, `cross-env`, `cross-spawn`, `execa`, `rimraf`, `mkdirp`, `glob`, `fast-glob`, `minimatch`, `micromatch`, `chokidar`, `fs-extra`, `graceful-fs`, `js-yaml`, `yaml`, `lru-cache`, `rxjs`, `immer`, `tslib`, `core-js`, `regenerator-runtime`, `object-assign`, `safe-buffer`, `readable-stream`, `through2`, `iconv-lite`, `source-map`, `ws`, `form-data`, `mime`, `mime-types`, `cookie`, `crypto-js`, `validator`, `xml2js`, `cheerio`
 
@@ -20,7 +20,7 @@ Build and test: `typescript`, `@types/node`, `@types/react`, `webpack`, `vite`, 
 
 ## Real packages that are one edit from a listed name
 
-These are legitimate, widely used projects, not near-names: `preact` (react), `vuex` (vue), `axe-core`, `yarn`, `pug`, `ejs`, `koa`, `hapi` and the like. Names of two or three letters (`ai`, `ms`, `ws`, `pg`, `qs`, `got`, `ora`) are one edit from many real packages, so never use them as anchors for a near-name. Before calling a name a near-name, ask whether it is a well-known package in its own right; if you're not sure, it stays `unverified`.
+These are legitimate, widely used projects, not near-names: `preact` (react), `vuex` (vue), `nuxt` (next), `cookies` (cookie), `color` (colors), `tslint` (eslint), `uid` (uuid), and short real names such as `yarn`, `pug`, `ejs`, `koa`. Names of two or three letters (`ai`, `ms`, `ws`, `pg`, `qs`, `got`, `ora`) are one edit from many real packages, so never use them as anchors for a near-name. Before calling a name a near-name, ask whether it is a well-known package in its own right; if you're not sure, it stays `unverified`.
 
 ## Packages known to have install scripts for good reasons
 
