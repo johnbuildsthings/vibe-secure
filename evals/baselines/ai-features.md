@@ -27,5 +27,5 @@ As in the other areas, the raw model finds the obvious holes. What it lacks is s
 
 - Indirect prompt injection (a tool that fetches pages, reads email or documents feeding a model that also has a write or send tool), and tools that act on an id the model chooses instead of the session user's id: both are `ai.prompt-to-tool` cases.
 - Model output run as code, SQL or shell (`eval`, `new Function`, a model-written query run whole): `ai.output-as-html` when `check-injection` wouldn't report it.
-- Markdown renderers with raw HTML on (`rehype-raw`, `markdown-it` `html: true`, `marked` into `innerHTML`).
+- Markdown renderers with raw HTML on (`rehype-raw`, `markdown-it` `html: true`, `marked` into `innerHTML`): moved to `check-injection`'s `inj.xss-html` in the final review (Ruling R36), so the hand-off line covers them.
 - False alarms on safe designs: ephemeral Realtime tokens, Firebase AI Logic, bring-your-own-key apps, a system prompt kept in server code, provider spending limits counted as a cap.

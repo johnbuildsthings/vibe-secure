@@ -181,12 +181,27 @@ const clean = sanitizeHtml(html, { allowedTags: ['b', 'i', 'em', 'strong', 'a', 
 
 ### Markdown
 
+The same fixes apply to user content and AI replies. When the text needs no formatting, show it as plain text (`<p className="whitespace-pre-wrap">{text}</p>`).
+
 ```jsx
 import ReactMarkdown from 'react-markdown'; // escapes raw HTML by default; don't add rehype-raw for user content
 <ReactMarkdown>{message.text}</ReactMarkdown>
+
+// If raw HTML is really needed, sanitise after rehype-raw
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize from 'rehype-sanitize';
+<ReactMarkdown rehypePlugins={[rehypeRaw, rehypeSanitize]}>{message.text}</ReactMarkdown>
 ```
 
-With `marked` or `markdown-it`: `DOMPurify.sanitize(marked.parse(text))`, or `markdownIt({ html: false })`. If you must keep `rehype-raw`, add `rehype-sanitize` after it.
+```js
+import DOMPurify from 'dompurify';               // isomorphic-dompurify when it runs on the server
+import { marked } from 'marked';
+el.innerHTML = DOMPurify.sanitize(marked.parse(text));
+```
+
+`showdown`: `DOMPurify.sanitize(converter.makeHtml(text))`. `markdown-it`: keep `html: false` (the default). `remark-html`: drop `sanitize: false` (it sanitises by default). Vue and Svelte: pass the renderer's output through `DOMPurify.sanitize` before `v-html` / `{@html}`.
+
+`may_break`: raw HTML written inside the text (inline `<span>`, `<iframe>`, `style`) no longer shows; markdown formatting such as bold, lists, tables and links stays.
 
 ### Links from user data
 

@@ -1,6 +1,6 @@
 ---
 name: check-ai-features
-description: Use when auditing an app's AI features (OpenAI, Anthropic, Gemini, Vercel AI SDK, LangChain) for holes, such as browser code calling the AI provider directly, user prompts steering a model that can call powerful tools, AI endpoints anyone can call with no login, rate limit or token cap, and model output run as code or rendered by a markdown renderer with raw HTML turned on.
+description: Use when auditing an app's AI features (OpenAI, Anthropic, Gemini, Vercel AI SDK, LangChain) for holes, such as browser code calling the AI provider directly, user prompts steering a model that can call powerful tools, AI endpoints anyone can call with no login, rate limit or token cap, and model output run as code, SQL or shell commands.
 disable-model-invocation: true
 ---
 
@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 ## What this protects against
 
-An AI model does whatever the text in front of it says, and your visitors write that text. If the model can call tools (look up records, send email, run queries), a visitor can talk it into calling them for their own ends: this is called prompt injection, and no system prompt reliably stops it. If your AI endpoint has no login, limit or token cap, anyone can run up your AI bill. If you run the model's reply as code, SQL or a shell command, or render it with a markdown renderer that lets raw HTML through, a visitor can steer the model into writing something that runs on your server or in other people's browsers.
+An AI model does whatever the text in front of it says, and your visitors write that text. If the model can call tools (look up records, send email, run queries), a visitor can talk it into calling them for their own ends: this is called prompt injection, and no system prompt reliably stops it. If your AI endpoint has no login, limit or token cap, anyone can run up your AI bill. If you run the model's reply as code, SQL or a shell command, a visitor can steer the model into writing something that runs on your server or in other people's browsers.
 
 OWASP Top 10 for LLM Applications (2025): `LLM10:2025 Unbounded Consumption` for `ai.client-side-llm-call` and `ai.no-usage-cap`; `LLM01:2025 Prompt Injection / LLM06:2025 Excessive Agency` for `ai.prompt-to-tool`; `LLM05:2025 Improper Output Handling` for `ai.output-as-html`.
 
@@ -42,7 +42,7 @@ Report only the four checks below. One root cause is one finding. If you notice 
 - SQL, a shell command or `eval` built **from** a tool's arguments or from model output pasted into your own query or command (`` `… WHERE ${args.filter}` ``), or a server fetch of a URL the model chose → `check-injection` (`inj.sql-string`, `inj.eval`, `inj.ssrf`). Your `ai.prompt-to-tool` is the exposure: a model visitors can steer, holding a powerful tool, with no allowlist or per-user scoping. Report both; neither raises the other's severity;
 - an AI route that returns or changes user data with no login check → `check-auth` owns the missing login. Your `ai.no-usage-cap` is the cost and abuse side: an AI route with no login and no rate limit is still your finding;
 - tables with RLS off or open policies that a tool reads through → `check-database-rules`;
-- model output put straight into an HTML sink (`dangerouslySetInnerHTML`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `v-html`, `{@html}`, `document.write`, jQuery `.html()`, an iframe `srcdoc`) → `check-injection` (`inj.xss-html`). Yours (check 4) is only a markdown renderer with raw HTML on, and model output that gets executed;
+- model output shown as HTML: put into an HTML sink (`dangerouslySetInnerHTML`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `v-html`, `{@html}`, `document.write`, jQuery `.html()`, an iframe `srcdoc`), or rendered by a markdown renderer that lets raw HTML through (`rehype-raw` without `rehype-sanitize`, `markdown-it` with `html: true`, `marked` or `showdown` output used as HTML, `remark-html` with `sanitize: false`) → `check-injection` (`inj.xss-html`). Yours (check 4) is only model output that gets executed;
 - missing `Content-Security-Policy` → `check-config`; an old AI SDK version → `check-dependencies`.
 
 ## Finding the AI code
@@ -128,28 +128,25 @@ A system prompt saying "only do X" or "never call delete" is not a guard: prompt
 
 In `impact`, also mention a missing length check on the visitor's prompt (input tokens cost money too), but don't raise the severity for it.
 
-### 4. `ai.output-as-html`: the AI's reply can run as code, or slip raw HTML through your markdown renderer
+### 4. `ai.output-as-html`: the AI's reply can run as code
 
-**Subject:** for execution, the call that runs the model's output, bare: `eval`, `new Function`, `vm.runInContext` (or whichever `vm.run*` call), `exec`, `subprocess`, `query`, `$queryRawUnsafe`, `SqlDatabaseChain`. For markdown, the renderer setting that lets raw HTML through: `rehype-raw`, `marked`, `markdown-it`, `showdown`, `remark-html`. One finding per subject per app; every place goes in `evidence`.
-**OWASP:** `LLM05:2025 Improper Output Handling`. **fix_risk:** `low` for markdown renderers (`may_break`: replies lose raw HTML; markdown formatting such as bold, lists, tables and links stays); `high` for execution, because the feature that ran model-written code or queries stops working until it is rebuilt on fixed operations.
+**Subject:** the call that runs the model's output, bare: `eval`, `new Function`, `vm.runInContext` (or whichever `vm.run*` call), `exec`, `subprocess`, `query`, `$queryRawUnsafe`, `SqlDatabaseChain`. One finding per subject per app; every place goes in `evidence`.
+**OWASP:** `LLM05:2025 Improper Output Handling`. **fix_risk:** `high`, because the feature that ran model-written code or queries stops working until it is rebuilt on fixed operations.
 
-**Find it:** model output (the provider's reply, a `useChat`/`useCompletion` message, your AI route's response read in the browser, or a stored chat history) reaching:
-
-- **execution:** `eval`, `new Function`, `vm.run*`, Python `exec`/`eval` of model-written code; a model-written SQL statement run as is (`pool.query(reply)`, `SqlDatabaseChain`, `create_sql_agent`); a model-written shell command run as is (`exec(reply)`, `subprocess.run(reply, shell=True)`);
-- **markdown rendered with raw HTML allowed:** `react-markdown` with `rehype-raw` and no `rehype-sanitize` after it; `marked` / `marked.parse` or `showdown` output used as HTML without DOMPurify; `markdown-it` with `html: true`; `remark-html` with `sanitize: false`.
+**Find it:** model output (the provider's reply, a `useChat`/`useCompletion` message, your AI route's response read in the browser, or a stored chat history) that gets executed: `eval`, `new Function`, `vm.run*`, Python `exec`/`eval` of model-written code; a model-written SQL statement run as is (`pool.query(reply)`, `SqlDatabaseChain`, `create_sql_agent`); a model-written shell command run as is (`exec(reply)`, `subprocess.run(reply, shell=True)`).
 
 Hand off, in one line each, and don't report:
 
-- model output put straight into an HTML sink (`dangerouslySetInnerHTML`, `innerHTML`, `v-html`, `{@html}`, an iframe `srcdoc`, …) with no markdown renderer in between → `check-injection` (`inj.xss-html`);
+- model output shown as HTML, directly in an HTML sink (`dangerouslySetInnerHTML`, `innerHTML`, `v-html`, `{@html}`, an iframe `srcdoc`, …) or through a markdown renderer with raw HTML on → `check-injection` (`inj.xss-html`);
 - model output pasted *into* your own SQL string, shell command or `eval` argument → `check-injection` (`inj.sql-string`, `inj.eval`). Report execution here only when the model writes the whole statement, command or program and your code runs it.
 
-**Confirm:** you can trace the value from the model call to the renderer or the call that runs it, and nothing on the way sanitises it (DOMPurify, `sanitize-html`, `rehype-sanitize`, `bleach`) or turns it into text.
+**Confirm:** you can trace the value from the model call to the call that runs it, and nothing on the way replaces it with a fixed operation (a typed tool, an allowlisted command).
 
-**Severity:** `high` for markdown renderers and code run in the browser: a visitor (or a page, email or document the model reads) can make the reply carry a script that runs in another user's browser, or in the user's own session with their login. `critical` when model-written code, SQL or shell commands run on your server, because whoever steers the model controls your server or database.
+**Severity:** `high` for code run in the browser: a visitor (or a page, email or document the model reads) can make the reply carry a script that runs in another user's browser, or in the user's own session with their login. `critical` when model-written code, SQL or shell commands run on your server, because whoever steers the model controls your server or database.
 
 ## Fixes
 
-Read `references/ai-fixes.md` before writing any `fix_plan` or applying a fix. It has: moving a browser AI call to a server route (Next.js, AI SDK, Vite with a Supabase Edge Function or Vercel/Netlify functions, Flask/FastAPI); keeping the system prompt and roles on the server; token caps per provider; rate limits and per-user quotas (Upstash, a database counter); the provider spending-limit steps; a server-side model allowlist, a fixed provider address and no fallback to your key; scoping tools to the signed-in user, fixed actions, confirmation before writes, separating outside content from write tools and an image-host allowlist; retrieval limited to the signed-in user (pgvector, Pinecone, LangChain); login and scoping for app-hosted MCP servers; and safe markdown rendering of model output (`react-markdown`, `rehype-sanitize`, DOMPurify), plus replacements for running model-written code or SQL.
+Read `references/ai-fixes.md` before writing any `fix_plan` or applying a fix. It has: moving a browser AI call to a server route (Next.js, AI SDK, Vite with a Supabase Edge Function or Vercel/Netlify functions, Flask/FastAPI); keeping the system prompt and roles on the server; token caps per provider; rate limits and per-user quotas (Upstash, a database counter); the provider spending-limit steps; a server-side model allowlist, a fixed provider address and no fallback to your key; scoping tools to the signed-in user, fixed actions, confirmation before writes, separating outside content from write tools and an image-host allowlist; retrieval limited to the signed-in user (pgvector, Pinecone, LangChain); login and scoping for app-hosted MCP servers; and replacements for running model-written code or SQL. Safe markdown rendering is in `check-injection`'s fixes.
 
 Before writing `may_break`, search for everything that uses the code you will change (browser components that call the provider or the route, other routes sharing the helper, tools the assistant relies on) and name them with `file:line`.
 

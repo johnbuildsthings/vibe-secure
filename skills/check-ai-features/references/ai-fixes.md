@@ -339,33 +339,7 @@ A limit in the provider's dashboard can't be seen from code and doesn't replace 
 
 ## Check 4: `ai.output-as-html`
 
-The rule: show model output as text. When it must be formatted, render markdown with raw HTML off, or sanitise the renderer's output. Never run model-written code, SQL or commands. (Model output put straight into `dangerouslySetInnerHTML`, `innerHTML` or an iframe `srcdoc` is `check-injection`'s `inj.xss-html`; its fixes cover those sinks.)
-
-### React
-
-```jsx
-// Plain text
-<p className="whitespace-pre-wrap">{reply}</p>
-
-// Markdown, safe by default (no rehype-raw)
-import ReactMarkdown from 'react-markdown';
-<ReactMarkdown>{reply}</ReactMarkdown>
-
-// If raw HTML is really needed, sanitise after rehype-raw
-import rehypeRaw from 'rehype-raw';
-import rehypeSanitize from 'rehype-sanitize';
-<ReactMarkdown rehypePlugins={[rehypeRaw, rehypeSanitize]}>{reply}</ReactMarkdown>
-```
-
-### `marked`, `markdown-it`, `showdown`, plain DOM
-
-```js
-import DOMPurify from 'dompurify';               // isomorphic-dompurify when it runs on the server
-import { marked } from 'marked';
-el.innerHTML = DOMPurify.sanitize(marked.parse(reply));
-```
-
-For `markdown-it`, keep `html: false` (the default). Vue: `v-html="DOMPurify.sanitize(html)"` or render text with `{{ }}`. Svelte: `{@html DOMPurify.sanitize(html)}` or plain `{reply}`.
+The rule: never run model-written code, SQL or commands. (Model output shown as HTML, directly in `dangerouslySetInnerHTML`, `innerHTML` or an iframe `srcdoc`, or through a markdown renderer with raw HTML on, is `check-injection`'s `inj.xss-html`; its fixes, including safe markdown rendering, are in `<root>/skills/check-injection/references/injection-fixes.md`.)
 
 ### Model-written code, SQL or shell commands
 
@@ -374,4 +348,4 @@ For `markdown-it`, keep `html: false` (the default). Vue: `v-html="DOMPurify.san
 - Instead of running a shell command the model wrote: a fixed command with `execFile` and an argument array, with arguments checked against a fixed list.
 - If the product really is "run the code the AI wrote", run it in an isolated sandbox service (a provider-hosted code interpreter or a separate container with no secrets and no network), never in your app's server process.
 
-`may_break` for check 4: replies lose any raw HTML (tables and links written in markdown still show with `react-markdown`); features that ran model-written code or queries stop working until they are rebuilt on fixed operations.
+`may_break` for check 4: features that ran model-written code or queries stop working until they are rebuilt on fixed operations.

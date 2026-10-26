@@ -43,6 +43,7 @@ Follow the run contract in `<root>/shared/area-skill-template.md` (Part 2). In s
 Report only the four checks below. One root cause is one finding. If you notice any of these, mention it in one line of your reply, name the skill, and write no finding:
 
 - an AI feature that lets the model's output drive a tool, query or action at all (the prompt-to-tool exposure) → `check-ai-features` (`ai.prompt-to-tool`). Your finding is the SQL, HTML, eval or fetch built from the tool's arguments;
+- model output that is executed whole (the model writes the code, SQL or shell command and your code runs it as is) → `check-ai-features` (`ai.output-as-html`). Model output shown as HTML, in a sink or through a markdown renderer with raw HTML on, is yours (`inj.xss-html`);
 - a route with no login check, or an AI endpoint with no login or rate limit → `check-auth` / `check-ai-features`. You only *use* "no login" to pick a severity (see below); you never report it;
 - tables with RLS off or open policies, or a browser query whose safety depends on them → `check-database-rules`;
 - a leaked or hard-coded key, a committed env file → `check-secrets`;
@@ -93,13 +94,13 @@ A SQL function with `EXECUTE format(… %s …)` or `'…' || arg` follows the h
 
 ### 2. `inj.xss-html`: a visitor can run their own script in other people's browsers
 
-**Subject:** the sink name, bare: `dangerouslySetInnerHTML`, `v-html`, `{@html}`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`, `.html()` (jQuery); for links, `href` or `src`; for server templates, the escape-bypass as written (`|safe`, `Markup`, `{{{ }}}`, `<%- %>`, `autoescape false`, `html_safe`). One finding per sink name per app; put every place it is used unsafely in `evidence`.
+**Subject:** the sink name, bare: `dangerouslySetInnerHTML`, `v-html`, `{@html}`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`, `.html()` (jQuery); for links, `href` or `src`; for server templates, the escape-bypass as written (`|safe`, `Markup`, `{{{ }}}`, `<%- %>`, `autoescape false`, `html_safe`); for a markdown renderer that lets raw HTML through, the renderer setting: `rehype-raw`, `markdown-it html: true`, `marked`, `showdown`, `remark-html sanitize: false`. One finding per subject per app; put every place it is used unsafely in `evidence`. When a renderer's output goes into a sink (`el.innerHTML = marked.parse(x)`), that is one finding under the renderer, not a second one under the sink.
 **OWASP:** `A05:2025 Injection`. **fix_risk:** `low` (the text shows up as plain text or with unsafe tags removed). In `may_break`, say what formatting users may lose (links, bold, embedded images) if the field is meant to hold HTML.
 
 **Find it:**
 
 - Raw-HTML sinks in browser code: React `dangerouslySetInnerHTML={{ __html: x }}`, Vue `v-html`, Svelte `{@html x}`, Angular `[innerHTML]` with `bypassSecurityTrustHtml`, and DOM `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`, jQuery `.html(x)` / `.append(x)` with a string of HTML.
-- Markdown or rich text turned into HTML (`marked`, `markdown-it`, `showdown`, `remark-html`, `react-markdown` with `rehype-raw`) and then put into one of those sinks.
+- Markdown renderers that let raw HTML through are sinks in their own right, even when no `innerHTML` is in sight: `react-markdown` (or any unified pipeline) with `rehype-raw` and no `rehype-sanitize` after it; `markdown-it` with `html: true`; `marked` / `marked.parse` or `showdown` `makeHtml` output used as HTML (in a sink, a `v-html`, or sent as an HTML response) without DOMPurify; `remark-html` with `sanitize: false`. This covers user content (comments, bios, posts) and AI replies alike. Rich-text HTML (from an editor) put into a sink is the sink's finding.
 - Links and sources taking a URL from user or database data (`href={user.website}`, `src={item.url}`, `window.location = …`) with no check that it starts with `http:` or `https:`: a `javascript:` URL runs a script when clicked.
 - Server templates with escaping turned off on user or database data: Jinja `|safe`, `{% autoescape false %}`, `Markup(x)`; Handlebars/Mustache `{{{ x }}}`; EJS `<%- x %>`; Pug `!{x}`; Django `|safe`, `mark_safe(x)`; Rails `html_safe`/`raw`; an HTML string built with an f-string, `+` or a template literal from user data and sent as HTML. A Flask view that returns a string is sent as `text/html` by default, and so is Express `res.send(string)`; elsewhere look for `Content-Type: text/html` (`new Response(html, { headers: { 'Content-Type': 'text/html' } })`). Returning JSON (`jsonify`, `Response.json`, `res.json`) is not this.
 
