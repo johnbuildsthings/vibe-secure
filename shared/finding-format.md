@@ -45,6 +45,12 @@ Evidence found in git history (`secrets.key-in-git-history`) adds an optional `c
 - The exception is `unverified`. These may have empty evidence and appear only under "worth a look" in the report.
 - Secrets are always masked, such as `sk_live_4f…a9`. The validator rejects any unmasked key in `title`, `impact`, `fix_plan`, `subject`, `manual_steps` or an evidence `summary`.
 
+## Merged results
+
+`merge-findings` writes `.vibe-secure/merged.json`. It merges findings with the same `check` + `subject` from every area file into one finding. Each merged finding keeps the fields above and adds `areas`: every area that reported it, such as `["database-rules", "live"]`. Its `area` is the first of those. To pick one area's findings, test whether that area is in `areas`, not `area`.
+
+The merged `status` follows this order: `awaiting-user`, then `open`, then `skipped`, then `fixed`. A merged finding is `fixed` only when every copy of it is fixed.
+
 ## Example
 
 ```json

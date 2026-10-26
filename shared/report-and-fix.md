@@ -16,7 +16,7 @@ Paths below are relative to the project being audited. `<root>` is the plugin ro
 1. Every findings file you wrote passes `node <root>/scripts/validate-findings.mjs <file>`. Fix and re-validate until it does. Never present a report built on a file that fails.
 2. Run `node <root>/scripts/merge-findings.mjs .`. It writes `.vibe-secure/merged.json` with `findings` (ranked), `worth_a_look` (the `unverified` ones), `counts` and `skipped_files`.
 3. Build the report from `merged.json`, not from memory.
-   - **Area skill run alone:** `merged.json` can also hold older results from other areas. Show only findings whose `area` is yours, and recount from those. If other areas' results exist, add one line at the end: "Earlier results for other areas are still in `.vibe-secure/findings/`. Run `/vibe-secure:security-check` for a fresh full report."
+   - **Area skill run alone:** `merged.json` can also hold older results from other areas. Show only findings whose `areas` list includes yours (a finding that your area and another both reported counts as yours), and recount from those. If other areas' results exist, add one line at the end: "Earlier results for other areas are still in `.vibe-secure/findings/`. Run `/vibe-secure:security-check` for a fresh full report."
    - **`skipped_files`** is non-empty: say "Couldn't check <area>: its results file was invalid", with the first error. Never drop an area silently.
 
 ## Report

@@ -114,6 +114,8 @@ test('refuses unbounded reads (unbounded-read)', async () => {
     'https://p.firebaseio.com/users.json',
     'https://p.firebaseio.com/users.json?shallow=false',
     'https://p.firebasedatabase.app/.json',
+    'https://p.firebaseio.com/users.json/',
+    'https://p.firebaseio.com/users.json//',
   ];
   for (const u of bad) {
     assert.deepEqual(await safeFetch(u, { root, ...fast }), { refused: 'unbounded-read' }, u);
@@ -149,6 +151,42 @@ test('refusal order: no-scope before method, method before host, host before unb
   assert.deepEqual(await safeFetch(url('/rest/v1/x'), { root, ...fast }), { refused: 'unbounded-read' });
 });
 
+const jwt = (payload) => [{ alg: 'HS256', typ: 'JWT' }, payload]
+  .map((o) => Buffer.from(JSON.stringify(o)).toString('base64url')).join('.') + '.c2lnbmF0dXJl';
+const SERVICE_JWT = jwt({ iss: 'supabase', ref: 'abcd', role: 'service_role' });
+const ANON_JWT = jwt({ iss: 'supabase', ref: 'abcd', role: 'anon' });
+const SB_SECRET = 'sb_secret_' + 'Q'.repeat(28) + 'z9';
+const SB_PUBLISHABLE = 'sb_publishable_' + 'Q'.repeat(28) + 'z9';
+
+test('refuses secret credentials in headers or query (secret-credential), before using a slot', async () => {
+  const cases = [
+    { headers: { apikey: SERVICE_JWT } },
+    { headers: { Authorization: `Bearer ${SERVICE_JWT}` } },
+    { headers: { apikey: SB_SECRET } },
+    { headers: { Authorization: `Bearer ${STRIPE}` } },
+    { path: `/rest/v1/p?limit=1&apikey=${SERVICE_JWT}` },
+    { path: `/rest/v1/p?limit=1&apikey=${SB_SECRET}` },
+    { path: `/x?key=${encodeURIComponent(STRIPE)}` },
+  ];
+  for (const c of cases) {
+    const r = await safeFetch(url(c.path ?? '/rest/v1/p?limit=1'), { root, headers: c.headers ?? {}, ...fast });
+    assert.deepEqual(r, { refused: 'secret-credential' }, JSON.stringify(c));
+  }
+  assert.equal(hits.length, 0);
+  assert.equal(fs.existsSync(logPath()), false);
+});
+
+test('public credentials are allowed: Supabase anon JWT and sb_publishable_ key', async () => {
+  const anon = await safeFetch(url('/rest/v1/p?limit=1'), {
+    root, method: 'HEAD', headers: { apikey: ANON_JWT, Authorization: `Bearer ${ANON_JWT}`, Prefer: 'count=exact' }, ...fast });
+  assert.equal(anon.status, 200);
+  const pub = await safeFetch(url('/rest/v1/p?limit=1'), { root, method: 'HEAD', headers: { apikey: SB_PUBLISHABLE }, ...fast });
+  assert.equal(pub.status, 200);
+  const q = await safeFetch(url(`/rest/v1/p?limit=1&apikey=${SB_PUBLISHABLE}`), { root, ...fast });
+  assert.equal(q.status, 200);
+  assert.equal(hits.length, 3);
+});
+
 test('in-scope GET: status, masked preview, masked headers, log line', async () => {
   const r = await safeFetch(url('/hi'), { root, ...fast });
   assert.equal(r.status, 200);
@@ -179,8 +217,10 @@ test('request headers are sent but never logged', async () => {
   assert.ok(!fs.readFileSync(logPath(), 'utf8').includes('SUPERSECRETANONKEY'));
 });
 
-test('secrets in the URL are masked in the log', async () => {
-  await safeFetch(url(`/x?key=${STRIPE}`), { root, ...fast });
+test('secrets in the URL path are masked in the log', async () => {
+  // (A secret in a query value or header is refused outright: see secret-credential.)
+  await safeFetch(url(`/x/${STRIPE}`), { root, ...fast });
+  assert.equal(readLogLines().length, 1);
   assert.ok(!fs.readFileSync(logPath(), 'utf8').includes(STRIPE));
 });
 
@@ -227,15 +267,14 @@ test('parallel calls at 49 lines send exactly 1 request', async () => {
 });
 
 test('parallel calls are spaced by the delay', async () => {
-  const stamps = [];
-  const s2 = http.createServer((req, res) => { stamps.push(Date.now()); res.end('ok'); });
-  await new Promise((r) => s2.listen(0, '127.0.0.1', r));
-  const p2 = s2.address().port;
-  writeScope([`127.0.0.1:${p2}`]);
-  await Promise.all([1, 2, 3].map(() => safeFetch(`http://127.0.0.1:${p2}/`, { root, delayMs: 150, timeoutMs: 2000 })));
-  s2.close();
+  // The log's reservation timestamps are taken after the wait, so they show the spacing
+  // without network jitter (server arrival times can bunch up under load).
+  await Promise.all([1, 2, 3].map(() => safeFetch(url('/'), { root, delayMs: 150, timeoutMs: 2000 })));
+  const stamps = readLogLines().map((l) => Date.parse(l.split('\t')[0]));
   assert.equal(stamps.length, 3);
-  assert.ok(stamps[1] - stamps[0] >= 130 && stamps[2] - stamps[1] >= 130, JSON.stringify(stamps));
+  assert.equal(hits.length, 3);
+  // 2 ms of slack: a timer may fire up to a millisecond early, and stamps are whole milliseconds.
+  assert.ok(stamps[1] - stamps[0] >= 148 && stamps[2] - stamps[1] >= 148, JSON.stringify(stamps));
 });
 
 test('encoded / differently-cased / duplicated-param bypasses are refused', async () => {

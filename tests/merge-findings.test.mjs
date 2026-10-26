@@ -61,12 +61,30 @@ test('fix_risk high wins over low', () => {
   assert.equal(mergeFindings([doc('x', [b, a])]).findings[0].fix_risk.may_break, 'logins');
 });
 
-test('awaiting-user wins, otherwise first status', () => {
-  const a = mk({ status: 'fixed' });
-  const b = mk({ id: 'db-2', status: 'awaiting-user' });
-  assert.equal(mergeFindings([doc('x', [a, b])]).findings[0].status, 'awaiting-user');
-  const c = mk({ id: 'db-3', status: 'open' });
-  assert.equal(mergeFindings([doc('x', [a, c])]).findings[0].status, 'fixed');
+test('status precedence: awaiting-user > open > skipped > fixed, regardless of file order', () => {
+  const st = (status, area, id) => mk({ status, area, id });
+  const status = (...fs) => mergeFindings([doc('x', fs)]).findings[0].status;
+  assert.equal(status(st('fixed', 'a', 'a-1'), st('awaiting-user', 'b', 'b-1')), 'awaiting-user');
+  assert.equal(status(st('open', 'a', 'a-1'), st('awaiting-user', 'b', 'b-1')), 'awaiting-user');
+  assert.equal(status(st('fixed', 'a', 'a-1'), st('open', 'b', 'b-1')), 'open');
+  assert.equal(status(st('open', 'a', 'a-1'), st('fixed', 'b', 'b-1')), 'open');
+  assert.equal(status(st('fixed', 'a', 'a-1'), st('skipped', 'b', 'b-1')), 'skipped');
+  assert.equal(status(st('skipped', 'a', 'a-1'), st('open', 'b', 'b-1')), 'open');
+  assert.equal(status(st('fixed', 'a', 'a-1'), st('fixed', 'b', 'b-1')), 'fixed');
+});
+
+test('merged finding lists every contributing area in areas; area stays the first', () => {
+  const code = mk({ area: 'database-rules', id: 'database-rules-1', status: 'fixed' });
+  const live = mk({ area: 'live', id: 'live-1', status: 'open', severity: 'critical' });
+  const r = mergeFindings([doc('database-rules', [code]), doc('live', [live])]);
+  assert.equal(r.findings.length, 1);
+  assert.deepEqual(r.findings[0].areas, ['database-rules', 'live']);
+  assert.equal(r.findings[0].area, 'database-rules');
+  assert.equal(r.findings[0].status, 'open');
+  const single = mergeFindings([doc('auth', [mk({ area: 'auth', check: 'auth.x' })])]);
+  assert.deepEqual(single.findings[0].areas, ['auth']);
+  const same = mergeFindings([doc('x', [mk({ area: 'live' }), mk({ area: 'live', id: 'live-2' })])]);
+  assert.deepEqual(same.findings[0].areas, ['live']);
 });
 
 test('does not mutate its input', () => {

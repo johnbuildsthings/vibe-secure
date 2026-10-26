@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isMain } from './is-main.mjs';
 import { maskText } from './mask.mjs';
+import { findUnmaskedSecrets } from './validate-findings.mjs';
 
 const MAX_REQUESTS = 50;
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
@@ -47,8 +48,19 @@ function isUnbounded(u) {
     if (u.searchParams.has('page_size') && !exactly(u, 'page_size', '1')) return true;
   }
   const isFirebaseDb = host.endsWith('firebaseio.com') || host.endsWith('firebasedatabase.app');
-  if (isFirebaseDb && path.endsWith('.json') && !exactly(u, 'shallow', 'true')) return true;
+  const trimmed = path.replace(/\/+$/, ''); // `/users.json/` reads the same node as `/users.json`
+  if (isFirebaseDb && trimmed.endsWith('.json') && !exactly(u, 'shallow', 'true')) return true;
   return false;
+}
+
+// Probes may carry only the public credentials a frontend ships (the Supabase anon JWT,
+// an `sb_publishable_` key, a Firebase web config). A Google API key is a Firebase web
+// key there, so it is allowed; every other server-side key is refused.
+const SB_SECRET = /(?<![A-Za-z0-9_-])sb_secret_[A-Za-z0-9_-]{8,}/;
+const PUBLIC_PATTERNS = new Set(['google-api-key']);
+function carriesSecret(headers, u) {
+  const values = [...Object.values(headers).map(String), ...u.searchParams.values()];
+  return values.some((v) => SB_SECRET.test(v) || findUnmaskedSecrets(v).some((n) => !PUBLIC_PATTERNS.has(n)));
 }
 
 // URL for the log: no credentials, no fragment, every query value hidden, known secrets masked.
@@ -117,6 +129,7 @@ export async function safeFetch(url, opts = {}) {
   if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password || !hosts.includes(u.host.toLowerCase())) {
     return { refused: 'host-not-in-scope' };
   }
+  if (carriesSecret(headers, u)) return { refused: 'secret-credential' };
   if (isUnbounded(u)) return { refused: 'unbounded-read' };
 
   const dir = path.join(root, '.vibe-secure');

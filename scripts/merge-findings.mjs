@@ -5,6 +5,9 @@ import { severityRank, validateFindingsFile } from './validate-findings.mjs';
 
 const COUNTED = ['critical', 'high', 'medium', 'low'];
 
+// A merged finding is `fixed` only when every copy is fixed.
+const STATUS_PRECEDENCE = ['awaiting-user', 'open', 'skipped', 'fixed'];
+
 const groupKey = (f) => `${f.check}\u0000${String(f.subject ?? '').trim().toLowerCase()}`;
 
 function mergeGroup(group) {
@@ -26,7 +29,8 @@ function mergeGroup(group) {
       merged.fix_risk = structuredClone(f.fix_risk);
     }
   }
-  if (group.some((f) => f.status === 'awaiting-user')) merged.status = 'awaiting-user';
+  merged.status = STATUS_PRECEDENCE.find((s) => group.some((f) => f.status === s)) ?? merged.status;
+  merged.areas = [...new Set(group.map((f) => f.area))];
   return merged;
 }
 
