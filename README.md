@@ -110,7 +110,7 @@ To add a new check:
    npm test
    ```
 
-The eval runs your skill against a copy of the fixture in a headless Claude session, then scores the findings against what was expected. Exit code 0 means it passed.
+The eval runs your skill against a copy of the fixture in a headless Claude session, then scores the findings against what was expected. Exit code 0 means it passed. Each run starts a real headless Claude session, which uses your Claude plan or is billed to your API account like any other session.
 
 ## License
 

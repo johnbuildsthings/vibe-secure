@@ -152,7 +152,7 @@ Every secret ever committed is leaked to anyone with a copy of the repository, e
 **Find it** (skip with a note if this isn't a git repository). Run each command below exactly as written, as its own Bash call, from the project root. Replace `<RX>` with this pattern, copied exactly (it has no `{…}` on purpose, because braces make the command need approval):
 
 ```
-(^|[^A-Za-z0-9_-])((sk|rk)_(live|test)_[A-Za-z0-9]+|sk-[A-Za-z0-9_-]+|AIza[0-9A-Za-z_-]+|AKIA[0-9A-Z]+|eyJ[A-Za-z0-9_-]+[.]eyJ[A-Za-z0-9_-]+[.][A-Za-z0-9_-]+|sb_secret_[A-Za-z0-9_-]+|whsec_[A-Za-z0-9]+)|BEGIN[A-Z ]*PRIVATE KEY
+(^|[^A-Za-z0-9_-])((sk|rk)_(live|test)_[A-Za-z0-9]+|sk-[A-Za-z0-9_-]+|AIza[0-9A-Za-z_-]+|AKIA[0-9A-Z]+|eyJ[A-Za-z0-9_-]+[.]eyJ[A-Za-z0-9_-]+[.][A-Za-z0-9_-]+|sb_secret_[A-Za-z0-9_-]+|whsec_[A-Za-z0-9]+|ASIA[0-9A-Z]+|ghp_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+|xox[abpr]-[A-Za-z0-9-]+|SG[.][A-Za-z0-9_-]+[.][A-Za-z0-9_-]+|re_[A-Za-z0-9_]+)|BEGIN[A-Z ]*PRIVATE KEY
 ```
 
 and `<excludes>` with `-- . ':(exclude,glob)**/package-lock.json' ':(exclude,glob)**/yarn.lock' ':(exclude,glob)**/pnpm-lock.yaml' ':(exclude,glob)**/node_modules/**'`.

@@ -124,10 +124,17 @@ The `subject` names the thing affected. Merge removes duplicates by `check` + `s
 | A key or secret in the current code or env files | the env var or identifier name that holds it | `VITE_MAILGUN_API_KEY`, `JWT_SECRET` |
 | A key found in git history, or a leaked key still waiting for rotation | the masked key | `sk_live_4f…a9` |
 | An env or secrets file problem | the file name, with its path from the project root if not at the root | `.env.production`, `apps/web/.env.local` |
-| `inj.xss-html` | the sink name | `dangerouslySetInnerHTML`, `v-html`, `innerHTML` |
+| `inj.xss-html` | the sink name, or the raw-HTML markdown renderer setting | `dangerouslySetInnerHTML`, `v-html`, `innerHTML`, `rehype-raw` |
 | Other injection in a function or tool | the function or tool name | `find_user`, `query_db` |
 | `ai.client-side-llm-call` | the provider name | `openai`, `anthropic`, `google` |
-| A route or page | the route path as users call it | `/api/orders`, `/api/billing/webhook`, `/settings/team` |
+| A route or page | the route path as users call it, with dynamic segments as `:name` | `/api/orders`, `/api/billing/webhook`, `/orders/:id` |
+| A server action | `action:<function name>` | `action:deleteNote` |
+| A Supabase Edge Function | `/functions/v1/<name>` | `/functions/v1/send-invoice` |
+| A Firebase or other cloud function | `fn:<exported name>` | `fn:createInvoice` |
+| A database function called through `/rpc` or `.rpc()` | `rpc:<function>` | `rpc:get_report` |
+| A Storage bucket | `storage:<bucket>` | `storage:uploads` |
+| An app-hosted MCP server | `mcp:<server>` (or the tool name) | `mcp:notes` |
+| A Stripe customer id taken from the request | `customerId` | `customerId` |
 | A database table or collection | the table or collection name | `orders` |
 | A rules or config file | the file name | `firestore.rules`, `vite.config` |
 | A dependency | the package name | `minimist` |
