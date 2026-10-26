@@ -9,6 +9,8 @@ An area skill that was **dispatched** by the orchestrator (its prompt says `disp
 
 Paths below are relative to the project being audited. `<root>` is the plugin root.
 
+**Report only** ("report only", "don't fix anything", "just tell me") skips only the fix loop. It still does everything before it: validate every findings file you wrote, run `merge-findings`, build the report from `merged.json`, show it and save it to its file. Never end a report-only run without the saved report.
+
 ## Before the report
 
 1. Every findings file you wrote passes `node <root>/scripts/validate-findings.mjs <file>`. Fix and re-validate until it does. Never present a report built on a file that fails.
@@ -90,7 +92,7 @@ What's already good
 
 ## Fix loop
 
-Skip this whole section if the user asked for a report only ("report only", "don't fix anything", "just tell me"). End with one line saying they can ask you to fix things later.
+Skip this whole section if the user asked for a report only, but only after the report above is saved. End with one line saying they can ask you to fix things later.
 
 1. **Ask how to proceed:** fix all critical issues now, go one at a time, or pick specific ones. If the user's message already approves fixes ("fix everything, I approve every fix"), take that as the answer and don't ask again.
 2. **Before each fix**, say in 1–2 sentences what will change and what may behave differently afterwards.

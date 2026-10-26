@@ -57,7 +57,7 @@ Verify needs only `<root>`, the project root, and whatever tools the check itsel
 5. Run the checks for every app in `stack.json` that the skill applies to (and the repo-wide checks once), then apply the rotation rules.
 6. Write the findings file (see "Findings file rules") and, if the skill uses it, `rotations.json`.
 7. `node <root>/scripts/validate-findings.mjs .vibe-secure/findings/<area>.json`. If it fails, fix the file and re-run until it passes.
-8. Follow `<root>/shared/report-and-fix.md`: merge, report (this area only), then the fix loop, unless the user asked for a report only, in which case stop after the report.
+8. Follow `<root>/shared/report-and-fix.md`: merge, report (this area only), then the fix loop. A report-only request skips only the fix loop: you still run `merge-findings`, show the report and save it to `.vibe-secure/report-<area>.md` before stopping.
 
 ### When dispatched by the orchestrator
 
@@ -147,7 +147,7 @@ Follow the run contract in `<root>/shared/area-skill-template.md` (Part 2). In s
 - `<root>` = two levels up from this skill's base directory (or `Plugin root:` in a dispatch prompt). Project root = the current directory (or `Project root:`).
 - **Mode:** `audit` unless the request says `verify <check> <subject>`.
 - **Time stamps:** `node -e "console.log(new Date().toISOString())"`. Never guess.
-- **Alone, audit:** `node <root>/scripts/init-workspace.mjs .`, then `node <root>/scripts/detect-stack.mjs .` if `.vibe-secure/stack.json` is missing → run the checks → write `.vibe-secure/findings/<area>.json` (always, `"findings": []` when clean) → `node <root>/scripts/validate-findings.mjs .vibe-secure/findings/<area>.json` until it passes → follow `<root>/shared/report-and-fix.md` (stop after the report if the user asked for a report only).
+- **Alone, audit:** `node <root>/scripts/init-workspace.mjs .`, then `node <root>/scripts/detect-stack.mjs .` if `.vibe-secure/stack.json` is missing → run the checks → write `.vibe-secure/findings/<area>.json` (always, `"findings": []` when clean) → `node <root>/scripts/validate-findings.mjs .vibe-secure/findings/<area>.json` until it passes → follow `<root>/shared/report-and-fix.md` (if the user asked for a report only, still run `merge-findings`, show the report and save it to `.vibe-secure/report-<area>.md`; then stop).
 - **`dispatched: audit`:** run the checks, write and validate the file, reply with counts, "already good" lines and skipped checks. No report, no fix loop.
 - **`verify <check> <subject>`:** no init or detect-stack (read `stack.json` or `package.json` directly); re-run that one check for that subject, reply `PRESENT` or `GONE` plus masked evidence, write nothing.
 - **Dispatched project root:** substitute it for `.` in every command.
