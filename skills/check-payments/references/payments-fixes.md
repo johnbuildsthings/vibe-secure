@@ -308,12 +308,25 @@ const PLAN_BY_PRICE = { [process.env.STRIPE_PRICE_PRO_MONTHLY]: 'pro', [process.
 
 async function syncSubscription(subscriptionId) {
   const sub = await stripe.subscriptions.retrieve(subscriptionId);   // fresh copy: events can arrive out of order
-  const accountId = sub.metadata?.account_id;
-  if (!accountId) throw new Error(`Subscription ${sub.id} has no account_id`); // Stripe retries; investigate
+  const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer.id;
+  let accountId = sub.metadata?.account_id;
+  if (!accountId) {
+    // Older subscriptions, Payment Links and the Pricing Table carry no metadata:
+    // find the account by the customer id stored at checkout instead.
+    const { data, error } = await admin.from('accounts').select('id').eq('stripe_customer_id', customerId).maybeSingle();
+    if (error) throw error;                                          // a real failure: Stripe retries
+    accountId = data?.id;
+  }
+  if (!accountId) {
+    // Not one of yours (yet). Returning normally answers 200: throwing would make Stripe
+    // retry for days and could disable the endpoint, and then cancellations stop arriving too.
+    console.warn(`Stripe subscription ${sub.id}: no account found; backfill its account_id`);
+    return;
+  }
   const active = sub.status === 'active' || sub.status === 'trialing';
   const plan = active ? PLAN_BY_PRICE[sub.items.data[0]?.price.id] ?? 'free' : 'free';
   await admin.from('accounts')
-    .update({ plan, subscription_status: sub.status, stripe_customer_id: sub.customer })
+    .update({ plan, subscription_status: sub.status, stripe_customer_id: customerId })
     .eq('id', accountId);
 }
 
@@ -340,6 +353,8 @@ switch (event.type) {
   }
 }
 ```
+
+`may_break` for this fix: subscriptions that already exist need their `account_id` metadata backfilled (or their `stripe_customer_id` stored on the account) before they sync; until then their events are logged and skipped, and their plan stays as it is.
 
 `past_due` keeps access off here; if the app deliberately allows a grace period, allow `past_due` explicitly and say so. Add these events to the endpoint in Stripe (Developers → Webhooks → the endpoint → Select events).
 

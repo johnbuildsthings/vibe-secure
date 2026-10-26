@@ -299,7 +299,7 @@ export async function POST(req: Request) {
   const { email, password } = await req.json();
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
   const [account, machine] = await Promise.all([
-    perAccount.limit(String(email).toLowerCase()),
+    perAccount.limit(typeof email === 'string' && email ? email.toLowerCase() : `ip:${ip}`),
     perIp.limit(ip),
   ]);
   if (!account.success || !machine.success) {
@@ -309,9 +309,42 @@ export async function POST(req: Request) {
 }
 ```
 
-Express (`express-rate-limit`): two limiters on the login route, one keyed by IP (the default) and one with `keyGenerator: (req) => String(req.body.email).toLowerCase()`. Flask-Limiter: `@limiter.limit("20 per 10 minutes")` plus `@limiter.limit("5 per 10 minutes", key_func=lambda: request.json["email"].lower())`.
+Express (`express-rate-limit`): two limiters on the login route, one keyed by IP (the default) and one keyed by the email. The email limiter needs the body parsed first, or every request lands in one shared bucket:
 
-`manual_steps` for Upstash: "Create a free Redis database at console.upstash.com, then add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN to your host's environment variables." `may_break`: "Someone who mistypes their password more than 5 times in 10 minutes has to wait."
+```js
+import rateLimit from 'express-rate-limit';
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));        // login forms post this format
+
+const perIp = rateLimit({ windowMs: 10 * 60 * 1000, limit: 20 });
+const perAccount = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 5,
+  keyGenerator: (req) => {
+    const email = req.body?.email;
+    return typeof email === 'string' && email ? email.toLowerCase() : `ip:${req.ip}`;
+  },
+});
+app.post('/login', perIp, perAccount, loginHandler);
+```
+
+Flask-Limiter, which reads the email from a JSON or a form login and falls back to the IP when there is none:
+
+```python
+from flask_limiter.util import get_remote_address
+
+def login_key():
+    data = request.get_json(silent=True) or request.form
+    return (data.get("email") or get_remote_address()).lower()
+
+@app.post("/login")
+@limiter.limit("20 per 10 minutes")
+@limiter.limit("5 per 10 minutes", key_func=login_key)
+def login(): ...
+```
+
+`manual_steps` for Upstash: "Create a free Redis database at console.upstash.com, then add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN to your host's environment variables." `may_break`: "Someone who mistypes their password more than 5 times in 10 minutes has to wait. Because the limit is per account, a stranger who sends wrong passwords for someone's email can keep that person locked out for as long as they keep trying."
 
 Also return the same error for "no such user" and "wrong password", so attackers can't learn which emails have accounts.
 

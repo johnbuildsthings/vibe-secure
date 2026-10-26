@@ -132,7 +132,7 @@ Also report a route whose only check is `getSession()` on the server, `jwt.decod
 ### 4. `auth.no-login-rate-limit`: your own login form lets attackers guess passwords
 
 **Subject:** the login or code-check route path (`/api/login`, `/api/verify-code`); for a server action, `action:<functionName>`; for an Auth.js Credentials provider, `/api/auth/callback/credentials`.
-**OWASP:** `A07:2025 Authentication Failures`. **fix_risk:** `low`.
+**OWASP:** `A07:2025 Authentication Failures`. **fix_risk:** `low`; `may_break`: people who mistype their password too often have to wait, and a stranger who spams someone's email with wrong passwords can lock that person out while they keep at it.
 
 **Find it:** code that checks a password or one-time code itself: `bcrypt.compare`, `bcrypt.compareSync`, `argon2.verify`, `scrypt`/`pbkdf2` comparisons, `check_password_hash`, a comparison against a stored password or code, an Auth.js / NextAuth `CredentialsProvider` / `Credentials({ authorize })`, routes that verify OTP, magic-link, 2FA or password-reset codes your app generated.
 
