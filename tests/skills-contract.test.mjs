@@ -40,6 +40,13 @@ test('security-check has the Run / Report / Fix loop sections and leans on share
   );
   assert.ok(md.includes('dispatched: verify <check> <subject>'));
   for (const area of AREAS) assert.ok(md.includes(`\`${area}\``), `names area ${area}`);
+  // Fix round 1: live re-checks go through check-live verify (exact request), never a bare safe-fetch GET;
+  // the orchestrator may write the rotation reminder; no eval-mock port in examples (R48).
+  assert.ok(md.includes('Never judge a live finding from your own bare `safe-fetch` request'));
+  assert.ok(md.includes('both** the code verify and the live verify reply `GONE`'));
+  assert.ok(md.includes('the rotation reminder finding'));
+  assert.ok(md.includes('never dispatch `live` a second time'));
+  assert.ok(!md.includes('4100') && !md.includes('4101'), 'no live-mock ports in the skill');
   for (const field of ['"url"', '"hosts"', '"confirmed_by_user"', '"confirmed_at"']) {
     assert.ok(md.includes(field), `live-scope.json example has ${field}`);
   }
